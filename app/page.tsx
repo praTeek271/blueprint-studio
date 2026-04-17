@@ -105,6 +105,24 @@ const IconExport = () => (
     <line x1="12" y1="15" x2="12" y2="3"></line>
   </svg>
 );
+const IconChevron = ({ open }: { open: boolean }) => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    style={{
+      transform: open ? "rotate(180deg)" : "rotate(0deg)",
+      transition: "transform 0.2s",
+    }}
+  >
+    <polyline points="6 9 12 15 18 9"></polyline>
+  </svg>
+);
 
 // --- TYPES ---
 type Point = { x: number; y: number };
@@ -199,7 +217,6 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Initialize offscreen canvas safely on the client
   useEffect(() => {
     if (!offscreenCanvasRef.current) {
       const canvas = document.createElement("canvas");
@@ -209,9 +226,11 @@ export default function App() {
     }
   }, []);
 
-  // App Modes
+  // App Modes & UI Accordions
   const [activeMode, setActiveMode] = useState<"vector" | "freehand">("vector");
   const [gridVisible, setGridVisible] = useState(true);
+  const [globalViewOpen, setGlobalViewOpen] = useState(false);
+  const [traceRefOpen, setTraceRefOpen] = useState(false);
 
   // Reference Image State
   const [referenceImg, setReferenceImg] = useState<HTMLImageElement | null>(
@@ -439,7 +458,14 @@ export default function App() {
       offCtx.globalCompositeOperation = isEraser
         ? "destination-out"
         : "source-over";
-      offCtx.strokeStyle = isEraser ? "#000" : isLive ? "#3b82f6" : "#1e293b";
+      // Fade inactive mode elements on canvas slightly for better focus, while maintaining tracing context
+      const strokeAlpha = activeMode === "freehand" || isLive ? 1.0 : 0.4;
+
+      offCtx.strokeStyle = isEraser
+        ? "#000"
+        : isLive
+          ? "#3b82f6"
+          : `rgba(30, 41, 59, ${strokeAlpha})`;
       offCtx.lineWidth = size;
       offCtx.lineCap = "round";
       offCtx.lineJoin = "round";
@@ -451,6 +477,9 @@ export default function App() {
 
       if (isMirrored) {
         offCtx.beginPath();
+        offCtx.strokeStyle = isLive
+          ? "#8b5cf6"
+          : `rgba(30, 41, 59, ${strokeAlpha * 0.7})`;
         offCtx.moveTo(600 - pathArray[0].x, pathArray[0].y);
         for (let i = 1; i < pathArray.length; i++)
           offCtx.lineTo(600 - pathArray[i].x, pathArray[i].y);
@@ -486,7 +515,7 @@ export default function App() {
       });
     });
 
-    if (currentStroke.length > 0) {
+    if (currentStroke.length > 0 && activeMode === "freehand") {
       const activeLayer = freehandLayers.find((l) => l.id === selectedLayerId);
       const isMirrored = activeLayer ? activeLayer.mirrored : true;
       drawStroke(
@@ -503,10 +532,14 @@ export default function App() {
 
     // 4. Draw Vector Curves (Dynamic Mesh)
     curves.forEach((curve) => {
-      const isSelected = selectedLayerId === curve.id;
+      const isSelected =
+        selectedLayerId === curve.id && activeMode === "vector";
+      const vectorAlpha = activeMode === "vector" ? 1.0 : 0.4; // Fade vectors when in freehand mode
 
       ctx.beginPath();
-      ctx.strokeStyle = isSelected ? "#2563eb" : "#0f172a";
+      ctx.strokeStyle = isSelected
+        ? "#2563eb"
+        : `rgba(15, 23, 42, ${vectorAlpha})`;
       ctx.lineWidth = 3;
       ctx.lineCap = "round";
       ctx.moveTo(curve.p0.x, curve.p0.y);
@@ -532,8 +565,8 @@ export default function App() {
       if (curve.mirrored) {
         ctx.beginPath();
         ctx.strokeStyle = isSelected
-          ? "rgba(37, 99, 235, 0.4)"
-          : "rgba(15, 23, 42, 0.3)";
+          ? `rgba(37, 99, 235, ${0.4 * vectorAlpha})`
+          : `rgba(15, 23, 42, ${0.3 * vectorAlpha})`;
         ctx.moveTo(600 - curve.p0.x, curve.p0.y);
         if (curve.type === "bezier")
           ctx.bezierCurveTo(
@@ -797,7 +830,7 @@ export default function App() {
             ...prev,
             {
               id: newId,
-              name: `Accessory ${prev.length + 1}`,
+              name: `Accessory ${freehandLayers.length + 1}`,
               mirrored: true,
               strokes: [newStroke],
             },
@@ -821,7 +854,10 @@ export default function App() {
     reader.onload = (event) => {
       const img = new Image();
       img.src = event.target?.result as string;
-      img.onload = () => setReferenceImg(img);
+      img.onload = () => {
+        setReferenceImg(img);
+        setTraceRefOpen(true);
+      };
     };
     reader.readAsDataURL(file);
   };
@@ -851,7 +887,7 @@ export default function App() {
           if (c.type === "bezier")
             jsCode += `ctx.bezierCurveTo(${600 - c.cp1!.x}, ${c.cp1!.y}, ${600 - c.cp2!.x}, ${c.cp2!.y}, ${600 - c.p1.x}, ${c.p1.y});\n`;
           else if (c.type === "quadratic")
-            jsCode += `ctx.quadraticCurveTo(${600 - c.cp1!.x}, ${c.cp1!.y}, ${600 - c.p1.x}, ${c.p1.y});\n`;
+            jsCode += `ctx.quadraticCurveTo(${600 - c.cp1!.x}, ${c.cp1!.y}, 600 - ${c.p1.x}, ${c.p1.y});\n`;
           else if (c.type === "line")
             jsCode += `ctx.lineTo(${600 - c.p1.x}, ${c.p1.y});\n`;
           jsCode += `ctx.stroke();\n`;
@@ -901,7 +937,7 @@ export default function App() {
     <div className="flex flex-col md:flex-row h-screen bg-slate-50 font-sans text-slate-800">
       {/* TOOLBAR */}
       <div className="w-full md:w-[360px] bg-white border-r border-slate-200 flex flex-col z-10 shrink-0 shadow-lg">
-        {/* Header with Export Button Shifted Here */}
+        {/* Header with Export Button */}
         <div className="p-4 border-b border-slate-200 bg-slate-900 text-white flex justify-between items-center">
           <div>
             <h1 className="text-lg font-black tracking-tight">
@@ -913,14 +949,14 @@ export default function App() {
           </div>
           <button
             onClick={generateExport}
-            className="flex items-center gap-2 bg-green-500 hover:bg-blue-900 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors shadow-md"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors shadow-md"
           >
-            <IconExport /> Export
+            <IconExport /> Export Design
           </button>
         </div>
 
         {/* Global Toolbar */}
-        <div className="flex p-4 border-b border-slate-200 gap-2 bg-slate-50">
+        <div className="flex p-4 border-b border-slate-200 gap-2 bg-slate-50 shrink-0">
           <button
             onClick={() => setActiveMode("vector")}
             className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${activeMode === "vector" ? "bg-blue-600 text-white border-blue-700 shadow-inner" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"}`}
@@ -929,49 +965,190 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveMode("freehand")}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${activeMode === "freehand" ? "bg-blue-600 text-white border-blue-700 shadow-inner" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"}`}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${activeMode === "freehand" ? "bg-emerald-600 text-white border-emerald-700 shadow-inner" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"}`}
           >
             Static Accessory
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* View Settings Accordion */}
+          <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden shrink-0">
+            <button
+              onClick={() => setGlobalViewOpen(!globalViewOpen)}
+              className="w-full p-4 flex justify-between items-center hover:bg-slate-100 transition-colors"
+            >
+              <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                Global View Settings
+              </h3>
+              <IconChevron open={globalViewOpen} />
+            </button>
+            {globalViewOpen && (
+              <div className="p-4 pt-0 border-t border-slate-200 mt-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-slate-700">
+                    Show Graph Grid
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={gridVisible}
+                      onChange={() => setGridVisible(!gridVisible)}
+                    />
+                    <div className="w-9 h-5 bg-slate-300 rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Trace Reference Accordion */}
+          <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden shrink-0">
+            <button
+              onClick={() => setTraceRefOpen(!traceRefOpen)}
+              className="w-full p-4 flex justify-between items-center hover:bg-slate-100 transition-colors"
+            >
+              <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                Trace Reference Image
+              </h3>
+              <IconChevron open={traceRefOpen} />
+            </button>
+            {traceRefOpen && (
+              <div className="p-4 pt-0 space-y-4 border-t border-slate-200 mt-2">
+                <label className="flex items-center justify-center w-full py-2 px-4 border border-slate-300 rounded-lg cursor-pointer bg-white hover:bg-slate-100 text-xs font-bold text-slate-600 transition-colors mt-2">
+                  {referenceImg ? "Replace Image" : "Upload Template"}
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                  />
+                </label>
+
+                {referenceImg && (
+                  <div className="space-y-3 pt-2">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 flex justify-between">
+                        Opacity{" "}
+                        <span>{Math.round(refConfig.opacity * 100)}%</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={refConfig.opacity}
+                        onChange={(e) =>
+                          setRefConfig({
+                            ...refConfig,
+                            opacity: Number(e.target.value),
+                          })
+                        }
+                        className="w-full mt-1 accent-blue-600"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 flex justify-between">
+                        Scale <span>{refConfig.scale.toFixed(2)}x</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="3"
+                        step="0.05"
+                        value={refConfig.scale}
+                        onChange={(e) =>
+                          setRefConfig({
+                            ...refConfig,
+                            scale: Number(e.target.value),
+                          })
+                        }
+                        className="w-full mt-1 accent-blue-600"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="text-[10px] font-bold text-slate-500 flex justify-between">
+                          X Offset <span>{refConfig.x}</span>
+                        </label>
+                        <input
+                          type="range"
+                          min="-300"
+                          max="300"
+                          step="5"
+                          value={refConfig.x}
+                          onChange={(e) =>
+                            setRefConfig({
+                              ...refConfig,
+                              x: Number(e.target.value),
+                            })
+                          }
+                          className="w-full mt-1 accent-blue-600"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-[10px] font-bold text-slate-500 flex justify-between">
+                          Y Offset <span>{refConfig.y}</span>
+                        </label>
+                        <input
+                          type="range"
+                          min="-300"
+                          max="300"
+                          step="5"
+                          value={refConfig.y}
+                          onChange={(e) =>
+                            setRefConfig({
+                              ...refConfig,
+                              y: Number(e.target.value),
+                            })
+                          }
+                          className="w-full mt-1 accent-blue-600"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Contextual Actions (Vector vs Freehand) */}
           {activeMode === "vector" ? (
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 space-y-2 shrink-0">
+              <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-2">
                 Add Vectors
               </h3>
               <div className="flex flex-col gap-2">
                 <button
                   onClick={() => addCurve("bezier")}
-                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors"
+                  className="py-2 bg-white border border-blue-200 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors shadow-sm"
                 >
                   + Bezier (Complex S-Curve)
                 </button>
                 <button
                   onClick={() => addCurve("quadratic")}
-                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-emerald-600 hover:border-emerald-400 transition-colors"
+                  className="py-2 bg-white border border-blue-200 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors shadow-sm"
                 >
                   + Quadratic (Simple Curve)
                 </button>
                 <button
                   onClick={() => addCurve("line")}
-                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-600 hover:border-slate-400 transition-colors"
+                  className="py-2 bg-white border border-blue-200 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors shadow-sm"
                 >
                   + Straight Line
                 </button>
               </div>
             </div>
           ) : (
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+            <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 space-y-4 shrink-0">
+              <h3 className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">
                 Sketch Tools
               </h3>
-              <div className="flex gap-2 bg-white p-1 rounded-lg border border-slate-200">
+              <div className="flex gap-2 bg-white p-1 rounded-lg border border-emerald-200 shadow-sm">
                 <button
                   onClick={() => setFreehandTool("brush")}
-                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "brush" ? "bg-blue-600 text-white shadow-inner" : "text-slate-500 hover:bg-slate-100"}`}
+                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "brush" ? "bg-emerald-600 text-white shadow-inner" : "text-slate-500 hover:bg-slate-100"}`}
                 >
                   <IconBrush />{" "}
                   <span className="ml-2 text-xs font-bold">Brush</span>
@@ -985,7 +1162,7 @@ export default function App() {
                 </button>
               </div>
               <div>
-                <label className="text-[10px] font-bold text-slate-500 flex justify-between">
+                <label className="text-[10px] font-bold text-emerald-600 flex justify-between">
                   Brush Size <span>{brushSize}px</span>
                 </label>
                 <input
@@ -994,301 +1171,216 @@ export default function App() {
                   max="50"
                   value={brushSize}
                   onChange={(e) => setBrushSize(Number(e.target.value))}
-                  className={`w-full mt-1 ${freehandTool === "eraser" ? "accent-red-500" : "accent-blue-600"}`}
+                  className={`w-full mt-1 ${freehandTool === "eraser" ? "accent-red-500" : "accent-emerald-600"}`}
                 />
               </div>
             </div>
           )}
 
           {/* Layer Manager */}
-          {(curves.length > 0 || freehandLayers.length > 0) && (
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-                Active Layers
+          {(activeMode === "vector" && curves.length > 0) ||
+          (activeMode === "freehand" && freehandLayers.length > 0) ? (
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4 shrink-0 pb-10">
+              <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-200 pb-2">
+                Active Layers (
+                {activeMode === "vector" ? "Vector Rig" : "Accessories"})
               </h3>
 
-              {/* Grouping Actions for Freehand Mode */}
-              {checkedFreehandIds.length > 0 && activeMode === "freehand" && (
-                <div className="flex justify-between items-center mb-3 bg-blue-100 px-3 py-2 rounded-lg text-blue-800 border border-blue-200 shadow-sm">
-                  <span className="text-xs font-bold">
-                    ({checkedFreehandIds.length}) layers selected
-                  </span>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={groupSelectedLayers}
-                      className="p-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                      title="Group Selected Layers"
+              {/* --- Vector Layers --- */}
+              {activeMode === "vector" && curves.length > 0 && (
+                <div className="space-y-2">
+                  {curves.map((c) => (
+                    <div
+                      key={c.id}
+                      onClick={() => {
+                        setSelectedLayerId(c.id);
+                        setActiveMode("vector");
+                      }}
+                      className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === c.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
                     >
-                      <IconGroup />
-                    </button>
-                    <button
-                      onClick={() => setCheckedFreehandIds([])}
-                      className="p-1.5 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 transition-colors font-bold text-[10px]"
-                      title="Deselect All"
-                    >
-                      ✕
-                    </button>
-                  </div>
+                      {editingNameId === c.id ? (
+                        <input
+                          autoFocus
+                          className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800"
+                          value={c.name}
+                          onChange={(e) =>
+                            updateLayerName(c.id, e.target.value, "vector")
+                          }
+                          onBlur={() => setEditingNameId(null)}
+                          onKeyDown={(e) =>
+                            e.key === "Enter" && setEditingNameId(null)
+                          }
+                        />
+                      ) : (
+                        <div className="flex-1 flex items-center min-w-0 pr-2">
+                          <span className="text-[10px] font-bold text-blue-400 mr-2 shrink-0">
+                            [V]
+                          </span>
+                          <span
+                            className="font-semibold text-xs text-slate-700 truncate"
+                            title={c.name}
+                          >
+                            {c.name}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedLayerId(c.id);
+                              setEditingNameId(c.id);
+                            }}
+                            className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
+                            title="Rename Layer"
+                          >
+                            <IconPencil />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleLayerMirror(c.id, "vector");
+                            }}
+                            className={`ml-1 p-1 shrink-0 transition-colors ${c.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
+                            title="Toggle Mirror Symmetry"
+                          >
+                            <IconMirror active={c.mirrored} />
+                          </button>
+                        </div>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeLayer(c.id, "vector");
+                        }}
+                        className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
 
-              <div className="space-y-2">
-                {curves.map((c) => (
-                  <div
-                    key={c.id}
-                    onClick={() => {
-                      setSelectedLayerId(c.id);
-                      setActiveMode("vector");
-                    }}
-                    className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === c.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
-                  >
-                    {editingNameId === c.id ? (
-                      <input
-                        autoFocus
-                        className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800"
-                        value={c.name}
-                        onChange={(e) =>
-                          updateLayerName(c.id, e.target.value, "vector")
-                        }
-                        onBlur={() => setEditingNameId(null)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && setEditingNameId(null)
-                        }
-                      />
-                    ) : (
-                      <div className="flex-1 flex items-center min-w-0 pr-2">
-                        <span className="text-[10px] font-bold text-blue-400 mr-2 shrink-0">
-                          [V]
-                        </span>
-                        <span
-                          className="font-semibold text-xs text-slate-700 truncate"
-                          title={c.name}
-                        >
-                          {c.name}
-                        </span>
+              {/* --- Accessory Layers --- */}
+              {activeMode === "freehand" && freehandLayers.length > 0 && (
+                <div className="space-y-2 mt-4">
+                  {/* Grouping Actions for Freehand Mode */}
+                  {checkedFreehandIds.length > 0 && (
+                    <div className="flex justify-between items-center mb-2 bg-emerald-50 px-3 py-2 rounded-lg text-emerald-800 border border-emerald-200 shadow-sm">
+                      <span className="text-[10px] font-bold">
+                        ({checkedFreehandIds.length}) layers selected
+                      </span>
+                      <div className="flex gap-1">
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLayerId(c.id);
-                            setEditingNameId(c.id);
-                          }}
-                          className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
-                          title="Rename Layer"
+                          onClick={groupSelectedLayers}
+                          className="p-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors"
+                          title="Group Selected Layers"
                         >
-                          <IconPencil />
+                          <IconGroup />
                         </button>
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleLayerMirror(c.id, "vector");
-                          }}
-                          className={`ml-1 p-1 shrink-0 transition-colors ${c.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
-                          title="Toggle Mirror Symmetry"
+                          onClick={() => setCheckedFreehandIds([])}
+                          className="p-1.5 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 transition-colors font-bold text-[10px]"
+                          title="Deselect All"
                         >
-                          <IconMirror active={c.mirrored} />
+                          ✕
                         </button>
                       </div>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeLayer(c.id, "vector");
-                      }}
-                      className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
+                    </div>
+                  )}
 
-                {freehandLayers.map((p) => (
-                  <div
-                    key={p.id}
-                    onClick={() => {
-                      setSelectedLayerId(p.id);
-                      setActiveMode("freehand");
-                    }}
-                    className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === p.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
-                  >
-                    {editingNameId === p.id ? (
-                      <input
-                        autoFocus
-                        className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800 ml-2"
-                        value={p.name}
-                        onChange={(e) =>
-                          updateLayerName(p.id, e.target.value, "freehand")
-                        }
-                        onBlur={() => setEditingNameId(null)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && setEditingNameId(null)
-                        }
-                      />
-                    ) : (
-                      <div className="flex-1 flex items-center min-w-0 pr-2">
+                  {freehandLayers.map((p) => (
+                    <div
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedLayerId(p.id);
+                        setActiveMode("freehand");
+                      }}
+                      className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === p.id ? "bg-emerald-50 border-emerald-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
+                    >
+                      {editingNameId === p.id ? (
                         <input
-                          type="checkbox"
-                          className="mr-2 cursor-pointer w-3 h-3 accent-blue-600"
-                          checked={checkedFreehandIds.includes(p.id)}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            if (e.target.checked)
-                              setCheckedFreehandIds((prev) => [...prev, p.id]);
-                            else
-                              setCheckedFreehandIds((prev) =>
-                                prev.filter((id) => id !== p.id),
-                              );
-                          }}
+                          autoFocus
+                          className="bg-white border border-emerald-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800 ml-2"
+                          value={p.name}
+                          onChange={(e) =>
+                            updateLayerName(p.id, e.target.value, "freehand")
+                          }
+                          onBlur={() => setEditingNameId(null)}
+                          onKeyDown={(e) =>
+                            e.key === "Enter" && setEditingNameId(null)
+                          }
                         />
-                        <span
-                          className={`text-[10px] font-bold mr-2 shrink-0 text-slate-400`}
-                        >
-                          [A]
-                        </span>
-                        <span
-                          className="font-semibold text-xs text-slate-700 truncate"
-                          title={p.name}
-                        >
-                          {p.name}
-                        </span>
-                        <span className="ml-1 text-[9px] font-mono text-slate-400">
-                          ({p.strokes.length})
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLayerId(p.id);
-                            setEditingNameId(p.id);
-                          }}
-                          className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
-                          title="Rename Layer"
-                        >
-                          <IconPencil />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleLayerMirror(p.id, "freehand");
-                          }}
-                          className={`ml-1 p-1 shrink-0 transition-colors ${p.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
-                          title="Toggle Mirror Symmetry"
-                        >
-                          <IconMirror active={p.mirrored} />
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeLayer(p.id, "freehand");
-                      }}
-                      className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
+                      ) : (
+                        <div className="flex-1 flex items-center min-w-0 pr-2">
+                          <input
+                            type="checkbox"
+                            className="mr-2 cursor-pointer w-3 h-3 accent-emerald-600"
+                            checked={checkedFreehandIds.includes(p.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              if (e.target.checked)
+                                setCheckedFreehandIds((prev) => [
+                                  ...prev,
+                                  p.id,
+                                ]);
+                              else
+                                setCheckedFreehandIds((prev) =>
+                                  prev.filter((id) => id !== p.id),
+                                );
+                              setActiveMode("freehand");
+                            }}
+                          />
+                          <span
+                            className={`text-[10px] font-bold mr-2 shrink-0 text-emerald-400`}
+                          >
+                            [A]
+                          </span>
+                          <span
+                            className="font-semibold text-xs text-slate-700 truncate"
+                            title={p.name}
+                          >
+                            {p.name}
+                          </span>
+                          <span className="ml-1 text-[9px] font-mono text-slate-400">
+                            ({p.strokes.length})
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedLayerId(p.id);
+                              setEditingNameId(p.id);
+                            }}
+                            className="ml-2 text-slate-300 hover:text-emerald-500 transition-colors p-1 shrink-0"
+                            title="Rename Layer"
+                          >
+                            <IconPencil />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleLayerMirror(p.id, "freehand");
+                            }}
+                            className={`ml-1 p-1 shrink-0 transition-colors ${p.mirrored ? "text-emerald-500" : "text-slate-300 hover:text-slate-400"}`}
+                            title="Toggle Mirror Symmetry"
+                          >
+                            <IconMirror active={p.mirrored} />
+                          </button>
+                        </div>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeLayer(p.id, "freehand");
+                        }}
+                        className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-
-          {/* Reference Image Tools */}
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
-            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Trace Reference
-            </h3>
-            <label className="flex items-center justify-center w-full py-2 px-4 border border-slate-300 rounded-lg cursor-pointer bg-white hover:bg-slate-100 text-xs font-bold text-slate-600 transition-colors">
-              {referenceImg ? "Replace Image" : "Upload Template"}
-              <input
-                type="file"
-                className="hidden"
-                accept="image/*"
-                onChange={handleImageUpload}
-              />
-            </label>
-
-            {referenceImg && (
-              <div className="space-y-3 pt-2">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 flex justify-between">
-                    Opacity <span>{Math.round(refConfig.opacity * 100)}%</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={refConfig.opacity}
-                    onChange={(e) =>
-                      setRefConfig({
-                        ...refConfig,
-                        opacity: Number(e.target.value),
-                      })
-                    }
-                    className="w-full mt-1 accent-blue-600"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 flex justify-between">
-                    Scale <span>{refConfig.scale.toFixed(2)}x</span>
-                  </label>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="3"
-                    step="0.05"
-                    value={refConfig.scale}
-                    onChange={(e) =>
-                      setRefConfig({
-                        ...refConfig,
-                        scale: Number(e.target.value),
-                      })
-                    }
-                    className="w-full mt-1 accent-blue-600"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="text-[10px] font-bold text-slate-500 flex justify-between">
-                      X Offset <span>{refConfig.x}</span>
-                    </label>
-                    <input
-                      type="range"
-                      min="-300"
-                      max="300"
-                      step="5"
-                      value={refConfig.x}
-                      onChange={(e) =>
-                        setRefConfig({
-                          ...refConfig,
-                          x: Number(e.target.value),
-                        })
-                      }
-                      className="w-full mt-1 accent-blue-600"
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-[10px] font-bold text-slate-500 flex justify-between">
-                      Y Offset <span>{refConfig.y}</span>
-                    </label>
-                    <input
-                      type="range"
-                      min="-300"
-                      max="300"
-                      step="5"
-                      value={refConfig.y}
-                      onChange={(e) =>
-                        setRefConfig({
-                          ...refConfig,
-                          y: Number(e.target.value),
-                        })
-                      }
-                      className="w-full mt-1 accent-blue-600"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          ) : null}
         </div>
       </div>
 
