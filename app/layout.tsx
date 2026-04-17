@@ -1,8 +1,8 @@
-
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import FullscreenButton from "./FullscreenButton";
+
+import ClientOnlyFullscreenButton from "./ClientOnlyFullscreenButton";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -25,13 +25,15 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Only show fullscreen button on /avatar-studio and /blueprint-studio
+  // This must be a Client Component to use hooks, so wrap the button in a client-only wrapper
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <FullscreenButton />
+        <ClientOnlyFullscreenButton />
         {children}
       </body>
     </html>
