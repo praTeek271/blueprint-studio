@@ -42,6 +42,69 @@ const IconMirror = ({ active }: { active: boolean }) => (
     />
   </svg>
 );
+const IconBrush = () => (
+  <svg
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    viewBox="0 0 24 24"
+  >
+    <path d="M18.36 4.64a4 4 0 00-5.65 0l-8.49 8.49a2 2 0 00-.5.83l-1.5 5.5a1 1 0 001.22 1.22l5.5-1.5a2 2 0 00.83-.5l8.49-8.49a4 4 0 000-5.65z" />
+    <path d="M14 8l2 2" />
+  </svg>
+);
+const IconEraser = () => (
+  <svg
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    viewBox="0 0 24 24"
+  >
+    <path d="M20 20H7L3 16C2.5 15.5 2.5 14.5 3 14L13 4C13.5 3.5 14.5 3.5 15 4L20 9C20.5 9.5 20.5 10.5 20 11L11 20H20V20Z" />
+    <path d="M17 6L6 17" />
+  </svg>
+);
+const IconGroup = () => (
+  <svg
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    viewBox="0 0 24 24"
+  >
+    <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+    <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+    <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+    <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+  </svg>
+);
+const IconExport = () => (
+  <svg
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    viewBox="0 0 24 24"
+  >
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+    <polyline points="7 10 12 15 17 10"></polyline>
+    <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+);
 
 // --- TYPES ---
 type Point = { x: number; y: number };
@@ -57,15 +120,94 @@ type Curve = {
   cp2?: Point;
 };
 
-type FreehandPath = {
+type Stroke = {
+  points: Point[];
+  size: number;
+  isEraser: boolean;
+};
+
+type FreehandLayer = {
   id: string;
   name: string;
   mirrored: boolean;
-  points: Point[];
+  strokes: Stroke[];
 };
+
+// Default Geometry from User's mathematical sketch
+const INITIAL_BASE_FACE: Curve[] = [
+  {
+    id: "c1",
+    type: "bezier",
+    name: "Cranium Outline",
+    mirrored: true,
+    p0: { x: 299, y: 54 },
+    cp1: { x: 254, y: 46 },
+    cp2: { x: 162, y: 110 },
+    p1: { x: 197, y: 215 },
+  },
+  {
+    id: "c2",
+    type: "quadratic",
+    name: "Jawline",
+    mirrored: true,
+    p0: { x: 197, y: 216 },
+    cp1: { x: 205, y: 350 },
+    p1: { x: 300, y: 385 },
+  },
+  {
+    id: "c3",
+    type: "bezier",
+    name: "Upper Cheekbone",
+    mirrored: true,
+    p0: { x: 299, y: 162 },
+    cp1: { x: 213, y: 116 },
+    cp2: { x: 217, y: 184 },
+    p1: { x: 195, y: 215 },
+  },
+  {
+    id: "c4",
+    type: "bezier",
+    name: "Lower Cheekbone",
+    mirrored: true,
+    p0: { x: 195, y: 218 },
+    cp1: { x: 154, y: 197 },
+    cp2: { x: 200, y: 298 },
+    p1: { x: 205, y: 278 },
+  },
+  {
+    id: "c5",
+    type: "bezier",
+    name: "Trapezius",
+    mirrored: true,
+    p0: { x: 235, y: 337 },
+    cp1: { x: 263, y: 510 },
+    cp2: { x: 100, y: 469 },
+    p1: { x: 80, y: 512 },
+  },
+  {
+    id: "c6",
+    type: "quadratic",
+    name: "Deltoid",
+    mirrored: true,
+    p0: { x: 91, y: 501 },
+    cp1: { x: 56, y: 526 },
+    p1: { x: 60, y: 584 },
+  },
+];
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Initialize offscreen canvas safely on the client
+  useEffect(() => {
+    if (!offscreenCanvasRef.current) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 600;
+      canvas.height = 600;
+      offscreenCanvasRef.current = canvas;
+    }
+  }, []);
 
   // App Modes
   const [activeMode, setActiveMode] = useState<"vector" | "freehand">("vector");
@@ -83,17 +225,20 @@ export default function App() {
   });
 
   // Vector State
-  const [curves, setCurves] = useState<Curve[]>([]);
+  const [curves, setCurves] = useState<Curve[]>(INITIAL_BASE_FACE);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [activeNode, setActiveNode] = useState<{
     curveId: string;
     nodeKey: string;
   } | null>(null);
 
-  // Freehand State (Static Accessories)
-  const [freehandPaths, setFreehandPaths] = useState<FreehandPath[]>([]);
-  const [currentPath, setCurrentPath] = useState<Point[]>([]);
+  // Freehand State
+  const [freehandLayers, setFreehandLayers] = useState<FreehandLayer[]>([]);
+  const [checkedFreehandIds, setCheckedFreehandIds] = useState<string[]>([]);
+  const [currentStroke, setCurrentStroke] = useState<Point[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [freehandTool, setFreehandTool] = useState<"brush" | "eraser">("brush");
+  const [brushSize, setBrushSize] = useState(3);
   const [smoothing] = useState(3);
 
   // UI State
@@ -147,8 +292,10 @@ export default function App() {
 
   const removeLayer = (id: string, type: "vector" | "freehand") => {
     if (type === "vector") setCurves((prev) => prev.filter((c) => c.id !== id));
-    if (type === "freehand")
-      setFreehandPaths((prev) => prev.filter((p) => p.id !== id));
+    if (type === "freehand") {
+      setFreehandLayers((prev) => prev.filter((p) => p.id !== id));
+      setCheckedFreehandIds((prev) => prev.filter((cId) => cId !== id));
+    }
     if (selectedLayerId === id) setSelectedLayerId(null);
   };
 
@@ -162,7 +309,7 @@ export default function App() {
         prev.map((c) => (c.id === id ? { ...c, name: newName } : c)),
       );
     if (type === "freehand")
-      setFreehandPaths((prev) =>
+      setFreehandLayers((prev) =>
         prev.map((p) => (p.id === id ? { ...p, name: newName } : p)),
       );
   };
@@ -173,9 +320,33 @@ export default function App() {
         prev.map((c) => (c.id === id ? { ...c, mirrored: !c.mirrored } : c)),
       );
     if (type === "freehand")
-      setFreehandPaths((prev) =>
+      setFreehandLayers((prev) =>
         prev.map((p) => (p.id === id ? { ...p, mirrored: !p.mirrored } : p)),
       );
+  };
+
+  const groupSelectedLayers = () => {
+    if (checkedFreehandIds.length < 2) return;
+
+    const layersToGroup = freehandLayers.filter((l) =>
+      checkedFreehandIds.includes(l.id),
+    );
+    const combinedStrokes = layersToGroup.flatMap((l) => l.strokes);
+    const newId = Date.now().toString();
+
+    const newLayer: FreehandLayer = {
+      id: newId,
+      name: `Grouped Accessory`,
+      mirrored: layersToGroup[0].mirrored,
+      strokes: combinedStrokes,
+    };
+
+    setFreehandLayers((prev) => [
+      ...prev.filter((l) => !checkedFreehandIds.includes(l.id)),
+      newLayer,
+    ]);
+    setCheckedFreehandIds([]);
+    setSelectedLayerId(newId);
   };
 
   // ==========================================
@@ -183,11 +354,12 @@ export default function App() {
   // ==========================================
   const renderCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !offscreenCanvasRef.current) return;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const offCtx = offscreenCanvasRef.current.getContext("2d");
+    if (!ctx || !offCtx) return;
 
-    // Clear
+    // Clear Main
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#f8fafc";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -225,7 +397,6 @@ export default function App() {
       }
     }
 
-    // Helper: Checks if a point exactly overlaps any other anchor in the scene
     const checkNodeSnap = (pt: Point, skipCurveId: string) => {
       let matchCount = 0;
       for (const c of curves) {
@@ -236,49 +407,57 @@ export default function App() {
           if (600 - c.p1.x === pt.x && c.p1.y === pt.y) matchCount++;
         }
       }
-      for (const p of freehandPaths) {
-        if (p.points.length > 0) {
-          if (p.points[0].x === pt.x && p.points[0].y === pt.y) matchCount++;
-          if (
-            p.points[p.points.length - 1].x === pt.x &&
-            p.points[p.points.length - 1].y === pt.y
-          )
-            matchCount++;
+      for (const layer of freehandLayers) {
+        for (const stroke of layer.strokes) {
+          if (stroke.points.length > 0) {
+            if (stroke.points[0].x === pt.x && stroke.points[0].y === pt.y)
+              matchCount++;
+            if (
+              stroke.points[stroke.points.length - 1].x === pt.x &&
+              stroke.points[stroke.points.length - 1].y === pt.y
+            )
+              matchCount++;
+          }
         }
       }
-
-      const isLiveSketch = skipCurveId === "live_sketch";
-      return isLiveSketch ? matchCount > 0 : matchCount > 1; // Curves will match themselves once
+      return skipCurveId === "live_sketch" ? matchCount > 0 : matchCount > 1;
     };
 
-    // Helper: Draw Path Array (Freehand)
-    const drawPathArray = (
+    // 3. Draw Freehand Accessories to Offscreen Canvas
+    offCtx.clearRect(0, 0, 600, 600);
+
+    const drawStroke = (
       pathArray: Point[],
+      size: number,
+      isEraser: boolean,
       isLive = false,
       isMirrored = false,
     ) => {
       if (pathArray.length < 2) return;
-      ctx.beginPath();
-      ctx.strokeStyle = isLive ? "#3b82f6" : "#1e293b";
-      ctx.lineWidth = 3;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.moveTo(pathArray[0].x, pathArray[0].y);
+
+      offCtx.beginPath();
+      offCtx.globalCompositeOperation = isEraser
+        ? "destination-out"
+        : "source-over";
+      offCtx.strokeStyle = isEraser ? "#000" : isLive ? "#3b82f6" : "#1e293b";
+      offCtx.lineWidth = size;
+      offCtx.lineCap = "round";
+      offCtx.lineJoin = "round";
+
+      offCtx.moveTo(pathArray[0].x, pathArray[0].y);
       for (let i = 1; i < pathArray.length; i++)
-        ctx.lineTo(pathArray[i].x, pathArray[i].y);
-      ctx.stroke();
+        offCtx.lineTo(pathArray[i].x, pathArray[i].y);
+      offCtx.stroke();
 
       if (isMirrored) {
-        ctx.beginPath();
-        ctx.strokeStyle = isLive ? "#8b5cf6" : "rgba(30, 41, 59, 0.4)";
-        ctx.moveTo(600 - pathArray[0].x, pathArray[0].y);
+        offCtx.beginPath();
+        offCtx.moveTo(600 - pathArray[0].x, pathArray[0].y);
         for (let i = 1; i < pathArray.length; i++)
-          ctx.lineTo(600 - pathArray[i].x, pathArray[i].y);
-        ctx.stroke();
+          offCtx.lineTo(600 - pathArray[i].x, pathArray[i].y);
+        offCtx.stroke();
       }
 
-      // Visual Indicator for Snapping in Freehand Mode
-      if (isLive) {
+      if (isLive && !isEraser) {
         const lastPoint = pathArray[pathArray.length - 1];
         const isCenter = lastPoint.x === 300;
         const isNode = checkNodeSnap(lastPoint, "live_sketch");
@@ -295,14 +474,37 @@ export default function App() {
       }
     };
 
-    freehandPaths.forEach((p) => drawPathArray(p.points, false, p.mirrored));
-    if (currentPath.length > 0) drawPathArray(currentPath, true, true);
+    freehandLayers.forEach((layer) => {
+      layer.strokes.forEach((stroke) => {
+        drawStroke(
+          stroke.points,
+          stroke.size,
+          stroke.isEraser,
+          false,
+          layer.mirrored,
+        );
+      });
+    });
 
-    // 4. Draw Vector Curves
+    if (currentStroke.length > 0) {
+      const activeLayer = freehandLayers.find((l) => l.id === selectedLayerId);
+      const isMirrored = activeLayer ? activeLayer.mirrored : true;
+      drawStroke(
+        currentStroke,
+        brushSize,
+        freehandTool === "eraser",
+        true,
+        isMirrored,
+      );
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(offscreenCanvasRef.current, 0, 0);
+
+    // 4. Draw Vector Curves (Dynamic Mesh)
     curves.forEach((curve) => {
       const isSelected = selectedLayerId === curve.id;
 
-      // Base Curve
       ctx.beginPath();
       ctx.strokeStyle = isSelected ? "#2563eb" : "#0f172a";
       ctx.lineWidth = 3;
@@ -327,7 +529,6 @@ export default function App() {
       else if (curve.type === "line") ctx.lineTo(curve.p1.x, curve.p1.y);
       ctx.stroke();
 
-      // Mirrored Curve
       if (curve.mirrored) {
         ctx.beginPath();
         ctx.strokeStyle = isSelected
@@ -355,7 +556,6 @@ export default function App() {
         ctx.stroke();
       }
 
-      // Draw Edit Handles
       if (isSelected && activeMode === "vector") {
         ctx.lineWidth = 1;
 
@@ -370,10 +570,10 @@ export default function App() {
           ctx.arc(point.x, point.y, isNodeActive ? 6 : 5, 0, Math.PI * 2);
 
           if (isCenterSnapped) {
-            ctx.fillStyle = isNodeActive ? "#22c55e" : "#86efac"; // Green Snap
+            ctx.fillStyle = isNodeActive ? "#22c55e" : "#86efac";
             ctx.strokeStyle = "#14532d";
           } else if (isNodeSnapped) {
-            ctx.fillStyle = isNodeActive ? "#f59e0b" : "#fcd34d"; // Amber Snap
+            ctx.fillStyle = isNodeActive ? "#f59e0b" : "#fcd34d";
             ctx.strokeStyle = "#78350f";
           } else {
             ctx.fillStyle = isControl
@@ -417,8 +617,10 @@ export default function App() {
     });
   }, [
     curves,
-    freehandPaths,
-    currentPath,
+    freehandLayers,
+    currentStroke,
+    brushSize,
+    freehandTool,
     selectedLayerId,
     activeNode,
     gridVisible,
@@ -427,8 +629,15 @@ export default function App() {
     activeMode,
   ]);
 
+  // Robust animation loop
   useEffect(() => {
-    renderCanvas();
+    let animId: number;
+    const loop = () => {
+      renderCanvas();
+      animId = requestAnimationFrame(loop);
+    };
+    loop();
+    return () => cancelAnimationFrame(animId);
   }, [renderCanvas]);
 
   // ==========================================
@@ -459,9 +668,8 @@ export default function App() {
     if (curve.type === "bezier") nodes.push({ key: "cp2", pt: curve.cp2! });
 
     for (let n of nodes) {
-      if (Math.hypot(n.pt.x - x, n.pt.y - y) <= HIT_RADIUS) {
+      if (Math.hypot(n.pt.x - x, n.pt.y - y) <= HIT_RADIUS)
         return { curveId: curve.id, nodeKey: n.key };
-      }
     }
     return null;
   };
@@ -472,7 +680,7 @@ export default function App() {
 
     if (activeMode === "freehand") {
       setIsDrawing(true);
-      setCurrentPath([coords]);
+      setCurrentStroke([coords]);
     } else if (activeMode === "vector") {
       const hit = findHitNode(coords.x, coords.y);
       if (hit) setActiveNode(hit);
@@ -484,41 +692,43 @@ export default function App() {
     let targetX = coords.x;
     let targetY = coords.y;
 
-    // Magnetic Snapping Logic (Iterates over all existing geometric anchors)
+    // Magnetic Snapping Logic
     const SNAP_RADIUS = 12;
     let closestDist = SNAP_RADIUS;
     let closestPt: Point | null = null;
-
     const snapTargets: Point[] = [];
+
     curves.forEach((c) => {
-      // Collect existing anchors (ignore the actively dragged node to avoid self-snapping)
       if (activeMode === "vector" && activeNode?.curveId === c.id) {
         if (activeNode.nodeKey !== "p0") snapTargets.push(c.p0);
         if (activeNode.nodeKey !== "p1") snapTargets.push(c.p1);
       } else {
         snapTargets.push(c.p0, c.p1);
       }
-      if (c.mirrored) {
+      if (c.mirrored)
         snapTargets.push(
           { x: 600 - c.p0.x, y: c.p0.y },
           { x: 600 - c.p1.x, y: c.p1.y },
         );
-      }
     });
 
-    freehandPaths.forEach((p) => {
-      if (p.points.length > 0) {
-        snapTargets.push(p.points[0], p.points[p.points.length - 1]);
-        if (p.mirrored) {
+    freehandLayers.forEach((layer) => {
+      layer.strokes.forEach((stroke) => {
+        if (stroke.points.length > 0) {
           snapTargets.push(
-            { x: 600 - p.points[0].x, y: p.points[0].y },
-            {
-              x: 600 - p.points[p.points.length - 1].x,
-              y: p.points[p.points.length - 1].y,
-            },
+            stroke.points[0],
+            stroke.points[stroke.points.length - 1],
           );
+          if (layer.mirrored)
+            snapTargets.push(
+              { x: 600 - stroke.points[0].x, y: stroke.points[0].y },
+              {
+                x: 600 - stroke.points[stroke.points.length - 1].x,
+                y: stroke.points[stroke.points.length - 1].y,
+              },
+            );
         }
-      }
+      });
     });
 
     snapTargets.forEach((pt) => {
@@ -529,20 +739,16 @@ export default function App() {
       }
     });
 
-    // 1. Prioritize Node Snapping
-    if (closestPt) {
+    if (closestPt && freehandTool !== "eraser") {
       targetX = closestPt.x;
       targetY = closestPt.y;
-    }
-    // 2. Fallback to Center Axis Snapping
-    else if (Math.abs(targetX - 300) < 10) {
+    } else if (Math.abs(targetX - 300) < 10 && freehandTool !== "eraser") {
       targetX = 300;
     }
 
     if (activeMode === "freehand" && isDrawing) {
-      setCurrentPath((prev) => {
+      setCurrentStroke((prev) => {
         const lastPoint = prev[prev.length - 1];
-        // Force commit the point if it magnetically snapped, otherwise smooth it
         if (
           closestPt ||
           targetX === 300 ||
@@ -554,12 +760,11 @@ export default function App() {
       });
     } else if (activeMode === "vector" && activeNode) {
       setCurves((prev) =>
-        prev.map((c) => {
-          if (c.id === activeNode.curveId) {
-            return { ...c, [activeNode.nodeKey]: { x: targetX, y: targetY } };
-          }
-          return c;
-        }),
+        prev.map((c) =>
+          c.id === activeNode.curveId
+            ? { ...c, [activeNode.nodeKey]: { x: targetX, y: targetY } }
+            : c,
+        ),
       );
     }
   };
@@ -568,25 +773,46 @@ export default function App() {
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     if (activeMode === "freehand" && isDrawing) {
       setIsDrawing(false);
-      if (currentPath.length > 1) {
-        setFreehandPaths((prev) => [
-          ...prev,
-          {
-            id: Date.now().toString(),
-            name: `Accessory ${prev.length + 1}`,
-            mirrored: true,
-            points: currentPath,
-          },
-        ]);
+      if (currentStroke.length > 1) {
+        const newStroke: Stroke = {
+          points: currentStroke,
+          size: brushSize,
+          isEraser: freehandTool === "eraser",
+        };
+
+        if (
+          selectedLayerId &&
+          freehandLayers.some((l) => l.id === selectedLayerId)
+        ) {
+          setFreehandLayers((prev) =>
+            prev.map((l) =>
+              l.id === selectedLayerId
+                ? { ...l, strokes: [...l.strokes, newStroke] }
+                : l,
+            ),
+          );
+        } else {
+          const newId = Date.now().toString();
+          setFreehandLayers((prev) => [
+            ...prev,
+            {
+              id: newId,
+              name: `Accessory ${prev.length + 1}`,
+              mirrored: true,
+              strokes: [newStroke],
+            },
+          ]);
+          setSelectedLayerId(newId);
+        }
       }
-      setCurrentPath([]);
+      setCurrentStroke([]);
     } else {
       setActiveNode(null);
     }
   };
 
   // ==========================================
-  // REFERENCE IMAGE
+  // REFERENCE IMAGE & EXPORT
   // ==========================================
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -600,17 +826,15 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // ==========================================
-  // EXPORT GENERATOR
-  // ==========================================
   const generateExport = () => {
     let jsCode = `// --- AVATAR MESH & ACCESSORIES (Generated from Blueprint Editor) ---\n`;
-    jsCode += `ctx.beginPath();\n`;
-    jsCode += `ctx.lineWidth = 3;\n`;
-    jsCode += `ctx.strokeStyle = '#1a1a1a';\n\n`;
 
     if (curves.length > 0) {
       jsCode += `// --- 1. DYNAMIC VECTOR RIG (Base Face) ---\n`;
+      jsCode += `ctx.beginPath();\n`;
+      jsCode += `ctx.lineWidth = 3;\n`;
+      jsCode += `ctx.strokeStyle = '#1a1a1a';\n\n`;
+
       curves.forEach((c) => {
         jsCode += `// ${c.name}\n`;
         jsCode += `ctx.moveTo(${c.p0.x}, ${c.p0.y});\n`;
@@ -636,23 +860,35 @@ export default function App() {
       });
     }
 
-    if (freehandPaths.length > 0) {
+    if (freehandLayers.length > 0) {
       jsCode += `// --- 2. STATIC ACCESSORIES (Freehand Painted) ---\n`;
-      freehandPaths.forEach((path) => {
-        jsCode += `// ${path.name}\n`;
-        jsCode += `ctx.moveTo(${path.points[0].x}, ${path.points[0].y});\n`;
-        for (let i = 1; i < path.points.length; i++) {
-          jsCode += `ctx.lineTo(${path.points[i].x}, ${path.points[i].y});\n`;
-        }
-        jsCode += `ctx.stroke();\n`;
 
-        if (path.mirrored) {
-          jsCode += `ctx.moveTo(${600 - path.points[0].x}, ${path.points[0].y});\n`;
-          for (let i = 1; i < path.points.length; i++) {
-            jsCode += `ctx.lineTo(${600 - path.points[i].x}, ${path.points[i].y});\n`;
+      freehandLayers.forEach((layer) => {
+        jsCode += `// ${layer.name}\n`;
+        layer.strokes.forEach((stroke) => {
+          jsCode += `ctx.lineWidth = ${stroke.size};\n`;
+          if (stroke.isEraser)
+            jsCode += `ctx.globalCompositeOperation = 'destination-out';\n`;
+
+          jsCode += `ctx.beginPath();\n`;
+          jsCode += `ctx.moveTo(${stroke.points[0].x}, ${stroke.points[0].y});\n`;
+          for (let i = 1; i < stroke.points.length; i++) {
+            jsCode += `ctx.lineTo(${stroke.points[i].x}, ${stroke.points[i].y});\n`;
           }
           jsCode += `ctx.stroke();\n`;
-        }
+
+          if (layer.mirrored) {
+            jsCode += `ctx.beginPath();\n`;
+            jsCode += `ctx.moveTo(${600 - stroke.points[0].x}, ${stroke.points[0].y});\n`;
+            for (let i = 1; i < stroke.points.length; i++) {
+              jsCode += `ctx.lineTo(${600 - stroke.points[i].x}, ${stroke.points[i].y});\n`;
+            }
+            jsCode += `ctx.stroke();\n`;
+          }
+
+          if (stroke.isEraser)
+            jsCode += `ctx.globalCompositeOperation = 'source-over';\n`;
+        });
         jsCode += `\n`;
       });
     }
@@ -665,13 +901,22 @@ export default function App() {
     <div className="flex flex-col md:flex-row h-screen bg-slate-50 font-sans text-slate-800">
       {/* TOOLBAR */}
       <div className="w-full md:w-[360px] bg-white border-r border-slate-200 flex flex-col z-10 shrink-0 shadow-lg">
-        <div className="p-5 border-b border-slate-200 bg-slate-900 text-white">
-          <h1 className="text-lg font-black tracking-tight">
-            Blueprint Studio
-          </h1>
-          <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">
-            Vector & Sketch Editor
-          </p>
+        {/* Header with Export Button Shifted Here */}
+        <div className="p-4 border-b border-slate-200 bg-slate-900 text-white flex justify-between items-center">
+          <div>
+            <h1 className="text-lg font-black tracking-tight">
+              Blueprint Studio
+            </h1>
+            <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">
+              Vector & Sketch Editor
+            </p>
+          </div>
+          <button
+            onClick={generateExport}
+            className="flex items-center gap-2 bg-green-500 hover:bg-blue-900 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors shadow-md"
+          >
+            <IconExport /> Export
+          </button>
         </div>
 
         {/* Global Toolbar */}
@@ -691,26 +936,260 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
-          {/* View Settings */}
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
-            <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              Global View
-            </h3>
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-bold text-slate-700">
-                Show Graph Grid
-              </span>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="sr-only peer"
-                  checked={gridVisible}
-                  onChange={() => setGridVisible(!gridVisible)}
-                />
-                <div className="w-9 h-5 bg-slate-300 rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
-              </label>
+          {/* Contextual Actions (Vector vs Freehand) */}
+          {activeMode === "vector" ? (
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                Add Vectors
+              </h3>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => addCurve("bezier")}
+                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors"
+                >
+                  + Bezier (Complex S-Curve)
+                </button>
+                <button
+                  onClick={() => addCurve("quadratic")}
+                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-emerald-600 hover:border-emerald-400 transition-colors"
+                >
+                  + Quadratic (Simple Curve)
+                </button>
+                <button
+                  onClick={() => addCurve("line")}
+                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-600 hover:border-slate-400 transition-colors"
+                >
+                  + Straight Line
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">
+                Sketch Tools
+              </h3>
+              <div className="flex gap-2 bg-white p-1 rounded-lg border border-slate-200">
+                <button
+                  onClick={() => setFreehandTool("brush")}
+                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "brush" ? "bg-blue-600 text-white shadow-inner" : "text-slate-500 hover:bg-slate-100"}`}
+                >
+                  <IconBrush />{" "}
+                  <span className="ml-2 text-xs font-bold">Brush</span>
+                </button>
+                <button
+                  onClick={() => setFreehandTool("eraser")}
+                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "eraser" ? "bg-red-500 text-white shadow-inner" : "text-slate-500 hover:bg-slate-100"}`}
+                >
+                  <IconEraser />{" "}
+                  <span className="ml-2 text-xs font-bold">Eraser</span>
+                </button>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 flex justify-between">
+                  Brush Size <span>{brushSize}px</span>
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="50"
+                  value={brushSize}
+                  onChange={(e) => setBrushSize(Number(e.target.value))}
+                  className={`w-full mt-1 ${freehandTool === "eraser" ? "accent-red-500" : "accent-blue-600"}`}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Layer Manager */}
+          {(curves.length > 0 || freehandLayers.length > 0) && (
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
+                Active Layers
+              </h3>
+
+              {/* Grouping Actions for Freehand Mode */}
+              {checkedFreehandIds.length > 0 && activeMode === "freehand" && (
+                <div className="flex justify-between items-center mb-3 bg-blue-100 px-3 py-2 rounded-lg text-blue-800 border border-blue-200 shadow-sm">
+                  <span className="text-xs font-bold">
+                    ({checkedFreehandIds.length}) layers selected
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={groupSelectedLayers}
+                      className="p-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      title="Group Selected Layers"
+                    >
+                      <IconGroup />
+                    </button>
+                    <button
+                      onClick={() => setCheckedFreehandIds([])}
+                      className="p-1.5 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 transition-colors font-bold text-[10px]"
+                      title="Deselect All"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {curves.map((c) => (
+                  <div
+                    key={c.id}
+                    onClick={() => {
+                      setSelectedLayerId(c.id);
+                      setActiveMode("vector");
+                    }}
+                    className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === c.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
+                  >
+                    {editingNameId === c.id ? (
+                      <input
+                        autoFocus
+                        className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800"
+                        value={c.name}
+                        onChange={(e) =>
+                          updateLayerName(c.id, e.target.value, "vector")
+                        }
+                        onBlur={() => setEditingNameId(null)}
+                        onKeyDown={(e) =>
+                          e.key === "Enter" && setEditingNameId(null)
+                        }
+                      />
+                    ) : (
+                      <div className="flex-1 flex items-center min-w-0 pr-2">
+                        <span className="text-[10px] font-bold text-blue-400 mr-2 shrink-0">
+                          [V]
+                        </span>
+                        <span
+                          className="font-semibold text-xs text-slate-700 truncate"
+                          title={c.name}
+                        >
+                          {c.name}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedLayerId(c.id);
+                            setEditingNameId(c.id);
+                          }}
+                          className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
+                          title="Rename Layer"
+                        >
+                          <IconPencil />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleLayerMirror(c.id, "vector");
+                          }}
+                          className={`ml-1 p-1 shrink-0 transition-colors ${c.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
+                          title="Toggle Mirror Symmetry"
+                        >
+                          <IconMirror active={c.mirrored} />
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeLayer(c.id, "vector");
+                      }}
+                      className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+
+                {freehandLayers.map((p) => (
+                  <div
+                    key={p.id}
+                    onClick={() => {
+                      setSelectedLayerId(p.id);
+                      setActiveMode("freehand");
+                    }}
+                    className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === p.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
+                  >
+                    {editingNameId === p.id ? (
+                      <input
+                        autoFocus
+                        className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800 ml-2"
+                        value={p.name}
+                        onChange={(e) =>
+                          updateLayerName(p.id, e.target.value, "freehand")
+                        }
+                        onBlur={() => setEditingNameId(null)}
+                        onKeyDown={(e) =>
+                          e.key === "Enter" && setEditingNameId(null)
+                        }
+                      />
+                    ) : (
+                      <div className="flex-1 flex items-center min-w-0 pr-2">
+                        <input
+                          type="checkbox"
+                          className="mr-2 cursor-pointer w-3 h-3 accent-blue-600"
+                          checked={checkedFreehandIds.includes(p.id)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            if (e.target.checked)
+                              setCheckedFreehandIds((prev) => [...prev, p.id]);
+                            else
+                              setCheckedFreehandIds((prev) =>
+                                prev.filter((id) => id !== p.id),
+                              );
+                          }}
+                        />
+                        <span
+                          className={`text-[10px] font-bold mr-2 shrink-0 text-slate-400`}
+                        >
+                          [A]
+                        </span>
+                        <span
+                          className="font-semibold text-xs text-slate-700 truncate"
+                          title={p.name}
+                        >
+                          {p.name}
+                        </span>
+                        <span className="ml-1 text-[9px] font-mono text-slate-400">
+                          ({p.strokes.length})
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedLayerId(p.id);
+                            setEditingNameId(p.id);
+                          }}
+                          className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
+                          title="Rename Layer"
+                        >
+                          <IconPencil />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleLayerMirror(p.id, "freehand");
+                          }}
+                          className={`ml-1 p-1 shrink-0 transition-colors ${p.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
+                          title="Toggle Mirror Symmetry"
+                        >
+                          <IconMirror active={p.mirrored} />
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeLayer(p.id, "freehand");
+                      }}
+                      className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Reference Image Tools */}
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
@@ -718,9 +1197,7 @@ export default function App() {
               Trace Reference
             </h3>
             <label className="flex items-center justify-center w-full py-2 px-4 border border-slate-300 rounded-lg cursor-pointer bg-white hover:bg-slate-100 text-xs font-bold text-slate-600 transition-colors">
-              {referenceImg
-                ? "Replace Reference Image"
-                : "Upload Template to Trace"}
+              {referenceImg ? "Replace Image" : "Upload Template"}
               <input
                 type="file"
                 className="hidden"
@@ -812,198 +1289,6 @@ export default function App() {
               </div>
             )}
           </div>
-
-          {/* Contextual Actions (Vector vs Freehand) */}
-          {activeMode === "vector" ? (
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
-                Add Vectors
-              </h3>
-              <div className="flex flex-col gap-2">
-                <button
-                  onClick={() => addCurve("bezier")}
-                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors"
-                >
-                  + Bezier (Complex S-Curve)
-                </button>
-                <button
-                  onClick={() => addCurve("quadratic")}
-                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-emerald-600 hover:border-emerald-400 transition-colors"
-                >
-                  + Quadratic (Simple Curve)
-                </button>
-                <button
-                  onClick={() => addCurve("line")}
-                  className="py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-600 hover:border-slate-400 transition-colors"
-                >
-                  + Straight Line
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 space-y-2">
-              <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-1">
-                Accessory Sketch Active
-              </h3>
-              <p className="text-[10px] text-blue-700 leading-relaxed">
-                Draw directly on the canvas. These lines act as static shapes,
-                independent of the dynamic face rig.
-              </p>
-            </div>
-          )}
-
-          {/* Layer Manager */}
-          {(curves.length > 0 || freehandPaths.length > 0) && (
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-                Active Layers
-              </h3>
-              <div className="space-y-2">
-                {curves.map((c) => (
-                  <div
-                    key={c.id}
-                    onClick={() => {
-                      setSelectedLayerId(c.id);
-                      setActiveMode("vector");
-                    }}
-                    className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === c.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
-                  >
-                    {editingNameId === c.id ? (
-                      <input
-                        autoFocus
-                        className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800"
-                        value={c.name}
-                        onChange={(e) =>
-                          updateLayerName(c.id, e.target.value, "vector")
-                        }
-                        onBlur={() => setEditingNameId(null)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && setEditingNameId(null)
-                        }
-                      />
-                    ) : (
-                      <div className="flex-1 flex items-center min-w-0 pr-2">
-                        <span className="text-[10px] font-bold text-slate-400 mr-2 shrink-0">
-                          [V]
-                        </span>
-                        <span
-                          className="font-semibold text-xs text-slate-700 truncate"
-                          title={c.name}
-                        >
-                          {c.name}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLayerId(c.id);
-                            setEditingNameId(c.id);
-                          }}
-                          className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
-                          title="Rename Layer"
-                        >
-                          <IconPencil />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleLayerMirror(c.id, "vector");
-                          }}
-                          className={`ml-1 p-1 shrink-0 transition-colors ${c.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
-                          title="Toggle Mirror Symmetry"
-                        >
-                          <IconMirror active={c.mirrored} />
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeLayer(c.id, "vector");
-                      }}
-                      className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-
-                {freehandPaths.map((p) => (
-                  <div
-                    key={p.id}
-                    onClick={() => {
-                      setSelectedLayerId(p.id);
-                      setActiveMode("freehand");
-                    }}
-                    className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === p.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
-                  >
-                    {editingNameId === p.id ? (
-                      <input
-                        autoFocus
-                        className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800"
-                        value={p.name}
-                        onChange={(e) =>
-                          updateLayerName(p.id, e.target.value, "freehand")
-                        }
-                        onBlur={() => setEditingNameId(null)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && setEditingNameId(null)
-                        }
-                      />
-                    ) : (
-                      <div className="flex-1 flex items-center min-w-0 pr-2">
-                        <span className="text-[10px] font-bold text-slate-400 mr-2 shrink-0">
-                          [A]
-                        </span>
-                        <span
-                          className="font-semibold text-xs text-slate-700 truncate"
-                          title={p.name}
-                        >
-                          {p.name}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLayerId(p.id);
-                            setEditingNameId(p.id);
-                          }}
-                          className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
-                          title="Rename Layer"
-                        >
-                          <IconPencil />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleLayerMirror(p.id, "freehand");
-                          }}
-                          className={`ml-1 p-1 shrink-0 transition-colors ${p.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
-                          title="Toggle Mirror Symmetry"
-                        >
-                          <IconMirror active={p.mirrored} />
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeLayer(p.id, "freehand");
-                      }}
-                      className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <button
-            onClick={generateExport}
-            className="w-full py-4 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/20"
-          >
-            Generate Geometry Code
-          </button>
         </div>
       </div>
 
@@ -1048,7 +1333,10 @@ export default function App() {
               </span>
             </>
           ) : (
-            <span>Click and drag to sketch accessory layers</span>
+            <span>
+              Draw shapes or erase background strokes safely. Strokes append to
+              the active layer.
+            </span>
           )}
         </div>
       </div>
