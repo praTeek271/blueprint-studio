@@ -105,6 +105,22 @@ const IconExport = () => (
     <line x1="12" y1="15" x2="12" y2="3"></line>
   </svg>
 );
+const IconImport = () => (
+  <svg
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    viewBox="0 0 24 24"
+  >
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+    <polyline points="7 10 12 15 17 10"></polyline>
+    <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+);
 const IconChevron = ({ open }: { open: boolean }) => (
   <svg
     width="14"
@@ -151,7 +167,6 @@ type FreehandLayer = {
   strokes: Stroke[];
 };
 
-// Default Geometry from User's mathematical sketch
 const INITIAL_BASE_FACE: Curve[] = [
   {
     id: "c1",
@@ -258,12 +273,21 @@ export default function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [freehandTool, setFreehandTool] = useState<"brush" | "eraser">("brush");
   const [brushSize, setBrushSize] = useState(3);
+  const [freehandSnapEnabled, setFreehandSnapEnabled] = useState(true);
   const [smoothing] = useState(3);
 
   // UI State
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [exportedCode, setExportedCode] = useState("");
   const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importCode, setImportCode] = useState("");
+
+  // Auto-deselect when switching modes to prevent cross-contamination
+  const handleModeChange = (mode: "vector" | "freehand") => {
+    setActiveMode(mode);
+    setSelectedLayerId(null);
+  };
 
   // ==========================================
   // ASSET STORE (Vector Curves)
@@ -346,20 +370,17 @@ export default function App() {
 
   const groupSelectedLayers = () => {
     if (checkedFreehandIds.length < 2) return;
-
     const layersToGroup = freehandLayers.filter((l) =>
       checkedFreehandIds.includes(l.id),
     );
     const combinedStrokes = layersToGroup.flatMap((l) => l.strokes);
     const newId = Date.now().toString();
-
     const newLayer: FreehandLayer = {
       id: newId,
       name: `Grouped Accessory`,
       mirrored: layersToGroup[0].mirrored,
       strokes: combinedStrokes,
     };
-
     setFreehandLayers((prev) => [
       ...prev.filter((l) => !checkedFreehandIds.includes(l.id)),
       newLayer,
@@ -378,12 +399,10 @@ export default function App() {
     const offCtx = offscreenCanvasRef.current.getContext("2d");
     if (!ctx || !offCtx) return;
 
-    // Clear Main
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#f8fafc";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 1. Draw Reference Image
     if (referenceImg) {
       ctx.save();
       ctx.globalAlpha = refConfig.opacity;
@@ -399,7 +418,6 @@ export default function App() {
       ctx.restore();
     }
 
-    // 2. Draw Grid
     if (gridVisible) {
       ctx.lineWidth = 1;
       for (let i = 0; i <= 600; i += 20) {
@@ -418,16 +436,16 @@ export default function App() {
 
     const checkNodeSnap = (pt: Point, skipCurveId: string) => {
       let matchCount = 0;
-      for (const c of curves) {
+      curves.forEach((c) => {
         if (c.p0.x === pt.x && c.p0.y === pt.y) matchCount++;
         if (c.p1.x === pt.x && c.p1.y === pt.y) matchCount++;
         if (c.mirrored) {
           if (600 - c.p0.x === pt.x && c.p0.y === pt.y) matchCount++;
           if (600 - c.p1.x === pt.x && c.p1.y === pt.y) matchCount++;
         }
-      }
-      for (const layer of freehandLayers) {
-        for (const stroke of layer.strokes) {
+      });
+      freehandLayers.forEach((layer) => {
+        layer.strokes.forEach((stroke) => {
           if (stroke.points.length > 0) {
             if (stroke.points[0].x === pt.x && stroke.points[0].y === pt.y)
               matchCount++;
@@ -437,14 +455,12 @@ export default function App() {
             )
               matchCount++;
           }
-        }
-      }
+        });
+      });
       return skipCurveId === "live_sketch" ? matchCount > 0 : matchCount > 1;
     };
 
-    // 3. Draw Freehand Accessories to Offscreen Canvas
     offCtx.clearRect(0, 0, 600, 600);
-
     const drawStroke = (
       pathArray: Point[],
       size: number,
@@ -453,14 +469,11 @@ export default function App() {
       isMirrored = false,
     ) => {
       if (pathArray.length < 2) return;
-
       offCtx.beginPath();
       offCtx.globalCompositeOperation = isEraser
         ? "destination-out"
         : "source-over";
-      // Fade inactive mode elements on canvas slightly for better focus, while maintaining tracing context
       const strokeAlpha = activeMode === "freehand" || isLive ? 1.0 : 0.4;
-
       offCtx.strokeStyle = isEraser
         ? "#000"
         : isLive
@@ -469,7 +482,6 @@ export default function App() {
       offCtx.lineWidth = size;
       offCtx.lineCap = "round";
       offCtx.lineJoin = "round";
-
       offCtx.moveTo(pathArray[0].x, pathArray[0].y);
       for (let i = 1; i < pathArray.length; i++)
         offCtx.lineTo(pathArray[i].x, pathArray[i].y);
@@ -486,11 +498,10 @@ export default function App() {
         offCtx.stroke();
       }
 
-      if (isLive && !isEraser) {
+      if (isLive && !isEraser && freehandSnapEnabled) {
         const lastPoint = pathArray[pathArray.length - 1];
         const isCenter = lastPoint.x === 300;
         const isNode = checkNodeSnap(lastPoint, "live_sketch");
-
         if (isCenter || isNode) {
           ctx.beginPath();
           ctx.arc(lastPoint.x, lastPoint.y, 6, 0, Math.PI * 2);
@@ -503,39 +514,29 @@ export default function App() {
       }
     };
 
-    freehandLayers.forEach((layer) => {
-      layer.strokes.forEach((stroke) => {
-        drawStroke(
-          stroke.points,
-          stroke.size,
-          stroke.isEraser,
-          false,
-          layer.mirrored,
-        );
-      });
-    });
-
+    freehandLayers.forEach((layer) =>
+      layer.strokes.forEach((s) =>
+        drawStroke(s.points, s.size, s.isEraser, false, layer.mirrored),
+      ),
+    );
     if (currentStroke.length > 0 && activeMode === "freehand") {
       const activeLayer = freehandLayers.find((l) => l.id === selectedLayerId);
-      const isMirrored = activeLayer ? activeLayer.mirrored : true;
       drawStroke(
         currentStroke,
         brushSize,
         freehandTool === "eraser",
         true,
-        isMirrored,
+        activeLayer ? activeLayer.mirrored : true,
       );
     }
 
     ctx.globalCompositeOperation = "source-over";
     ctx.drawImage(offscreenCanvasRef.current, 0, 0);
 
-    // 4. Draw Vector Curves (Dynamic Mesh)
     curves.forEach((curve) => {
       const isSelected =
         selectedLayerId === curve.id && activeMode === "vector";
-      const vectorAlpha = activeMode === "vector" ? 1.0 : 0.4; // Fade vectors when in freehand mode
-
+      const vectorAlpha = activeMode === "vector" ? 1.0 : 0.4;
       ctx.beginPath();
       ctx.strokeStyle = isSelected
         ? "#2563eb"
@@ -591,17 +592,13 @@ export default function App() {
 
       if (isSelected && activeMode === "vector") {
         ctx.lineWidth = 1;
-
         const drawNode = (point: Point, isControl = false, nodeKey: string) => {
           const isNodeActive =
             activeNode?.curveId === curve.id && activeNode?.nodeKey === nodeKey;
           const isCenterSnapped = point.x === 300 && curve.mirrored;
-          const isAnchor = !isControl;
-          const isNodeSnapped = isAnchor && checkNodeSnap(point, curve.id);
-
+          const isNodeSnapped = !isControl && checkNodeSnap(point, curve.id);
           ctx.beginPath();
           ctx.arc(point.x, point.y, isNodeActive ? 6 : 5, 0, Math.PI * 2);
-
           if (isCenterSnapped) {
             ctx.fillStyle = isNodeActive ? "#22c55e" : "#86efac";
             ctx.strokeStyle = "#14532d";
@@ -618,11 +615,9 @@ export default function App() {
                 : "#93c5fd";
             ctx.strokeStyle = isControl ? "#b91c1c" : "#1d4ed8";
           }
-
           ctx.fill();
           ctx.stroke();
         };
-
         const drawGuideline = (pA: Point, pB: Point) => {
           ctx.beginPath();
           ctx.strokeStyle = "rgba(239, 68, 68, 0.5)";
@@ -632,7 +627,6 @@ export default function App() {
           ctx.stroke();
           ctx.setLineDash([]);
         };
-
         if (curve.type === "bezier") {
           drawGuideline(curve.p0, curve.cp1!);
           drawGuideline(curve.p1, curve.cp2!);
@@ -643,7 +637,6 @@ export default function App() {
           drawGuideline(curve.p1, curve.cp1!);
           drawNode(curve.cp1!, true, "cp1");
         }
-
         drawNode(curve.p0, false, "p0");
         drawNode(curve.p1, false, "p1");
       }
@@ -654,6 +647,7 @@ export default function App() {
     currentStroke,
     brushSize,
     freehandTool,
+    freehandSnapEnabled,
     selectedLayerId,
     activeNode,
     gridVisible,
@@ -662,7 +656,6 @@ export default function App() {
     activeMode,
   ]);
 
-  // Robust animation loop
   useEffect(() => {
     let animId: number;
     const loop = () => {
@@ -673,129 +666,107 @@ export default function App() {
     return () => cancelAnimationFrame(animId);
   }, [renderCanvas]);
 
-  // ==========================================
-  // INTERACTION LOGIC (Mouse & Touch)
-  // ==========================================
-  const getCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const scaleX = canvasRef.current!.width / rect.width;
     const scaleY = canvasRef.current!.height / rect.height;
-    return {
+    const coords = {
       x: Math.round((e.clientX - rect.left) * scaleX),
       y: Math.round((e.clientY - rect.top) * scaleY),
     };
-  };
-
-  const findHitNode = (x: number, y: number) => {
-    if (!selectedLayerId) return null;
-    const curve = curves.find((c) => c.id === selectedLayerId);
-    if (!curve) return null;
-
-    const HIT_RADIUS = 12;
-    const nodes = [
-      { key: "p0", pt: curve.p0 },
-      { key: "p1", pt: curve.p1 },
-    ];
-    if (curve.type === "bezier" || curve.type === "quadratic")
-      nodes.push({ key: "cp1", pt: curve.cp1! });
-    if (curve.type === "bezier") nodes.push({ key: "cp2", pt: curve.cp2! });
-
-    for (let n of nodes) {
-      if (Math.hypot(n.pt.x - x, n.pt.y - y) <= HIT_RADIUS)
-        return { curveId: curve.id, nodeKey: n.key };
-    }
-    return null;
-  };
-
-  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const coords = getCoords(e);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
     if (activeMode === "freehand") {
       setIsDrawing(true);
       setCurrentStroke([coords]);
-    } else if (activeMode === "vector") {
-      const hit = findHitNode(coords.x, coords.y);
-      if (hit) setActiveNode(hit);
+    } else {
+      if (!selectedLayerId) return;
+      const curve = curves.find((c) => c.id === selectedLayerId);
+      if (!curve) return;
+      const nodes = [
+        { key: "p0", pt: curve.p0 },
+        { key: "p1", pt: curve.p1 },
+      ];
+      if (curve.type !== "line") nodes.push({ key: "cp1", pt: curve.cp1! });
+      if (curve.type === "bezier") nodes.push({ key: "cp2", pt: curve.cp2! });
+      for (let n of nodes) {
+        if (Math.hypot(n.pt.x - coords.x, n.pt.y - coords.y) <= 12) {
+          setActiveNode({ curveId: curve.id, nodeKey: n.key });
+          break;
+        }
+      }
     }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const coords = getCoords(e);
-    let targetX = coords.x;
-    let targetY = coords.y;
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const coords = {
+      x: Math.round((e.clientX - rect.left) * (600 / rect.width)),
+      y: Math.round((e.clientY - rect.top) * (600 / rect.height)),
+    };
+    let tx = coords.x;
+    let ty = coords.y;
 
-    // Magnetic Snapping Logic
-    const SNAP_RADIUS = 12;
-    let closestDist = SNAP_RADIUS;
-    let closestPt: Point | null = null;
-    const snapTargets: Point[] = [];
-
-    curves.forEach((c) => {
-      if (activeMode === "vector" && activeNode?.curveId === c.id) {
-        if (activeNode.nodeKey !== "p0") snapTargets.push(c.p0);
-        if (activeNode.nodeKey !== "p1") snapTargets.push(c.p1);
-      } else {
-        snapTargets.push(c.p0, c.p1);
-      }
-      if (c.mirrored)
-        snapTargets.push(
-          { x: 600 - c.p0.x, y: c.p0.y },
-          { x: 600 - c.p1.x, y: c.p1.y },
-        );
-    });
-
-    freehandLayers.forEach((layer) => {
-      layer.strokes.forEach((stroke) => {
-        if (stroke.points.length > 0) {
+    if (
+      activeMode === "vector" ||
+      (activeMode === "freehand" &&
+        freehandTool !== "eraser" &&
+        freehandSnapEnabled)
+    ) {
+      const snapTargets: Point[] = [];
+      curves.forEach((c) => {
+        if (!(activeNode?.curveId === c.id && activeNode.nodeKey === "p0"))
+          snapTargets.push(c.p0);
+        if (!(activeNode?.curveId === c.id && activeNode.nodeKey === "p1"))
+          snapTargets.push(c.p1);
+        if (c.mirrored)
           snapTargets.push(
-            stroke.points[0],
-            stroke.points[stroke.points.length - 1],
+            { x: 600 - c.p0.x, y: c.p0.y },
+            { x: 600 - c.p1.x, y: c.p1.y },
           );
-          if (layer.mirrored)
+      });
+      freehandLayers.forEach((l) =>
+        l.strokes.forEach((s) => {
+          snapTargets.push(s.points[0], s.points[s.points.length - 1]);
+          if (l.mirrored)
             snapTargets.push(
-              { x: 600 - stroke.points[0].x, y: stroke.points[0].y },
+              { x: 600 - s.points[0].x, y: s.points[0].y },
               {
-                x: 600 - stroke.points[stroke.points.length - 1].x,
-                y: stroke.points[stroke.points.length - 1].y,
+                x: 600 - s.points[s.points.length - 1].x,
+                y: s.points[s.points.length - 1].y,
               },
             );
+        }),
+      );
+      let best = 12;
+      let hit: Point | null = null;
+      snapTargets.forEach((p) => {
+        const d = Math.hypot(p.x - tx, p.y - ty);
+        if (d < best) {
+          best = d;
+          hit = p;
         }
       });
-    });
-
-    snapTargets.forEach((pt) => {
-      const dist = Math.hypot(pt.x - coords.x, pt.y - coords.y);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestPt = pt;
+      if (hit) {
+        tx = hit.x;
+        ty = hit.y;
+      } else if (Math.abs(tx - 300) < 10) {
+        tx = 300;
       }
-    });
-
-    if (closestPt && freehandTool !== "eraser") {
-      targetX = closestPt.x;
-      targetY = closestPt.y;
-    } else if (Math.abs(targetX - 300) < 10 && freehandTool !== "eraser") {
-      targetX = 300;
     }
 
     if (activeMode === "freehand" && isDrawing) {
-      setCurrentStroke((prev) => {
-        const lastPoint = prev[prev.length - 1];
-        if (
-          closestPt ||
-          targetX === 300 ||
-          Math.hypot(targetX - lastPoint.x, targetY - lastPoint.y) > smoothing
-        ) {
-          return [...prev, { x: targetX, y: targetY }];
-        }
-        return prev;
-      });
+      setCurrentStroke((p) =>
+        Math.hypot(tx - p[p.length - 1].x, ty - p[p.length - 1].y) >
+          smoothing || tx === 300
+          ? [...p, { x: tx, y: ty }]
+          : p,
+      );
     } else if (activeMode === "vector" && activeNode) {
       setCurves((prev) =>
         prev.map((c) =>
           c.id === activeNode.curveId
-            ? { ...c, [activeNode.nodeKey]: { x: targetX, y: targetY } }
+            ? { ...c, [activeNode.nodeKey]: { x: tx, y: ty } }
             : c,
         ),
       );
@@ -807,53 +778,47 @@ export default function App() {
     if (activeMode === "freehand" && isDrawing) {
       setIsDrawing(false);
       if (currentStroke.length > 1) {
-        const newStroke: Stroke = {
+        const s: Stroke = {
           points: currentStroke,
           size: brushSize,
           isEraser: freehandTool === "eraser",
         };
-
         if (
           selectedLayerId &&
           freehandLayers.some((l) => l.id === selectedLayerId)
-        ) {
-          setFreehandLayers((prev) =>
-            prev.map((l) =>
+        )
+          setFreehandLayers((p) =>
+            p.map((l) =>
               l.id === selectedLayerId
-                ? { ...l, strokes: [...l.strokes, newStroke] }
+                ? { ...l, strokes: [...l.strokes, s] }
                 : l,
             ),
           );
-        } else {
-          const newId = Date.now().toString();
-          setFreehandLayers((prev) => [
-            ...prev,
+        else {
+          const nid = Date.now().toString();
+          setFreehandLayers((p) => [
+            ...p,
             {
-              id: newId,
-              name: `Accessory ${freehandLayers.length + 1}`,
+              id: nid,
+              name: `Accessory ${p.length + 1}`,
               mirrored: true,
-              strokes: [newStroke],
+              strokes: [s],
             },
           ]);
-          setSelectedLayerId(newId);
+          setSelectedLayerId(nid);
         }
       }
       setCurrentStroke([]);
-    } else {
-      setActiveNode(null);
-    }
+    } else setActiveNode(null);
   };
 
-  // ==========================================
-  // REFERENCE IMAGE & EXPORT
-  // ==========================================
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = (ev) => {
       const img = new Image();
-      img.src = event.target?.result as string;
+      img.src = ev.target?.result as string;
       img.onload = () => {
         setReferenceImg(img);
         setTraceRefOpen(true);
@@ -863,108 +828,289 @@ export default function App() {
   };
 
   const generateExport = () => {
-    let jsCode = `// --- AVATAR MESH & ACCESSORIES (Generated from Blueprint Editor) ---\n`;
-
+    let js = `// --- AVATAR MESH & ACCESSORIES ---\n`;
     if (curves.length > 0) {
-      jsCode += `// --- 1. DYNAMIC VECTOR RIG (Base Face) ---\n`;
-      jsCode += `ctx.beginPath();\n`;
-      jsCode += `ctx.lineWidth = 3;\n`;
-      jsCode += `ctx.strokeStyle = '#1a1a1a';\n\n`;
-
+      js += `// --- 1. VECTOR RIG ---\nctx.beginPath(); ctx.lineWidth = 3; ctx.strokeStyle = '#1a1a1a';\n`;
       curves.forEach((c) => {
-        jsCode += `// ${c.name}\n`;
-        jsCode += `ctx.moveTo(${c.p0.x}, ${c.p0.y});\n`;
+        js += `// ${c.name}\nctx.moveTo(${c.p0.x}, ${c.p0.y});\n`;
         if (c.type === "bezier")
-          jsCode += `ctx.bezierCurveTo(${c.cp1!.x}, ${c.cp1!.y}, ${c.cp2!.x}, ${c.cp2!.y}, ${c.p1.x}, ${c.p1.y});\n`;
+          js += `ctx.bezierCurveTo(${c.cp1!.x}, ${c.cp1!.y}, ${c.cp2!.x}, ${c.cp2!.y}, ${c.p1.x}, ${c.p1.y});\n`;
         else if (c.type === "quadratic")
-          jsCode += `ctx.quadraticCurveTo(${c.cp1!.x}, ${c.cp1!.y}, ${c.p1.x}, ${c.p1.y});\n`;
-        else if (c.type === "line")
-          jsCode += `ctx.lineTo(${c.p1.x}, ${c.p1.y});\n`;
-        jsCode += `ctx.stroke();\n`;
-
+          js += `ctx.quadraticCurveTo(${c.cp1!.x}, ${c.cp1!.y}, ${c.p1.x}, ${c.p1.y});\n`;
+        else js += `ctx.lineTo(${c.p1.x}, ${c.p1.y});\n`;
+        js += `ctx.stroke();\n`;
         if (c.mirrored) {
-          jsCode += `ctx.moveTo(${600 - c.p0.x}, ${c.p0.y});\n`;
+          js += `ctx.moveTo(${600 - c.p0.x}, ${c.p0.y});\n`;
           if (c.type === "bezier")
-            jsCode += `ctx.bezierCurveTo(${600 - c.cp1!.x}, ${c.cp1!.y}, ${600 - c.cp2!.x}, ${c.cp2!.y}, ${600 - c.p1.x}, ${c.p1.y});\n`;
+            js += `ctx.bezierCurveTo(${600 - c.cp1!.x}, ${c.cp1!.y}, ${600 - c.cp2!.x}, ${c.cp2!.y}, ${600 - c.p1.x}, ${c.p1.y});\n`;
           else if (c.type === "quadratic")
-            jsCode += `ctx.quadraticCurveTo(${600 - c.cp1!.x}, ${c.cp1!.y}, 600 - ${c.p1.x}, ${c.p1.y});\n`;
-          else if (c.type === "line")
-            jsCode += `ctx.lineTo(${600 - c.p1.x}, ${c.p1.y});\n`;
-          jsCode += `ctx.stroke();\n`;
+            js += `ctx.quadraticCurveTo(${600 - c.cp1!.x}, ${c.cp1!.y}, ${600 - c.p1.x}, ${c.p1.y});\n`;
+          else js += `ctx.lineTo(${600 - c.p1.x}, ${c.p1.y});\n`;
+          js += `ctx.stroke();\n`;
         }
-        jsCode += `\n`;
       });
     }
-
     if (freehandLayers.length > 0) {
-      jsCode += `// --- 2. STATIC ACCESSORIES (Freehand Painted) ---\n`;
-
-      freehandLayers.forEach((layer) => {
-        jsCode += `// ${layer.name}\n`;
-        layer.strokes.forEach((stroke) => {
-          jsCode += `ctx.lineWidth = ${stroke.size};\n`;
-          if (stroke.isEraser)
-            jsCode += `ctx.globalCompositeOperation = 'destination-out';\n`;
-
-          jsCode += `ctx.beginPath();\n`;
-          jsCode += `ctx.moveTo(${stroke.points[0].x}, ${stroke.points[0].y});\n`;
-          for (let i = 1; i < stroke.points.length; i++) {
-            jsCode += `ctx.lineTo(${stroke.points[i].x}, ${stroke.points[i].y});\n`;
-          }
+      jsCode += `\n// --- 2. ACCESSORIES ---\n`;
+      freehandLayers.forEach((l) => {
+        jsCode += `// ${l.name}\n`;
+        l.strokes.forEach((s) => {
+          jsCode += `ctx.lineWidth = ${s.size}; ${s.isEraser ? "ctx.globalCompositeOperation = 'destination-out';" : ""}\nctx.beginPath(); ctx.moveTo(${s.points[0].x}, ${s.points[0].y});\n`;
+          for (let i = 1; i < s.points.length; i++)
+            jsCode += `ctx.lineTo(${s.points[i].x}, ${s.points[i].y});\n`;
           jsCode += `ctx.stroke();\n`;
-
-          if (layer.mirrored) {
-            jsCode += `ctx.beginPath();\n`;
-            jsCode += `ctx.moveTo(${600 - stroke.points[0].x}, ${stroke.points[0].y});\n`;
-            for (let i = 1; i < stroke.points.length; i++) {
-              jsCode += `ctx.lineTo(${600 - stroke.points[i].x}, ${stroke.points[i].y});\n`;
-            }
+          if (l.mirrored) {
+            jsCode += `ctx.beginPath(); ctx.moveTo(${600 - s.points[0].x}, ${s.points[0].y});\n`;
+            for (let i = 1; i < s.points.length; i++)
+              jsCode += `ctx.lineTo(${600 - s.points[i].x}, ${s.points[i].y});\n`;
             jsCode += `ctx.stroke();\n`;
           }
-
-          if (stroke.isEraser)
+          if (s.isEraser)
             jsCode += `ctx.globalCompositeOperation = 'source-over';\n`;
         });
-        jsCode += `\n`;
       });
     }
-
+    jsCode += `\n// --- WORKSPACE STATE (VERSION 1.1) ---\n// STATE_JSON:${JSON.stringify({ curves, freehandLayers })}\n`;
     setExportedCode(jsCode);
     setShowExport(true);
   };
 
+  const handleImportAction = () => {
+    const match = importCode.match(/\/\/ STATE_JSON:(.+)/);
+    if (match && match[1]) {
+      try {
+        const s = JSON.parse(match[1].trim());
+        if (s.curves) setCurves(s.curves);
+        if (s.freehandLayers) setFreehandLayers(s.freehandLayers);
+        setSelectedLayerId(null);
+        setActiveNode(null);
+        setShowImport(false);
+        setImportCode("");
+        alert("Workspace restored!");
+      } catch (e) {
+        alert("Failed to restore state.");
+      }
+    } else {
+      // --- LEGACY PARSER ENGINE ---
+      try {
+        const parsedCurves: Curve[] = [];
+        const parsedLayers: FreehandLayer[] = [];
+        let currentSection = "none";
+        let currentName = "Legacy Shape";
+        let lastMoveTo: Point | null = null;
+
+        let currentLayer: FreehandLayer | null = null;
+        let currentStroke: Stroke | null = null;
+        let currentSize = 3;
+
+        // Automatically computes equations like "600 - 250"
+        const parseCoord = (str: string) => {
+          if (str.includes("-")) {
+            const parts = str.split("-");
+            return parseInt(parts[0]) - parseInt(parts[1]);
+          }
+          if (str.includes("+")) {
+            const parts = str.split("+");
+            return parseInt(parts[0]) + parseInt(parts[1]);
+          }
+          return parseInt(str.trim(), 10);
+        };
+
+        const lines = importCode.split("\n");
+        for (let line of lines) {
+          line = line.trim();
+          if (!line) continue;
+
+          if (line.includes("1. DYNAMIC VECTOR")) {
+            currentSection = "vector";
+            continue;
+          }
+          if (line.includes("2. STATIC ACCESSORIES")) {
+            currentSection = "freehand";
+            continue;
+          }
+
+          if (line.startsWith("//") && !line.includes("---")) {
+            currentName = line.replace("//", "").trim();
+            if (currentSection === "freehand") {
+              if (
+                currentLayer &&
+                currentStroke &&
+                currentStroke.points.length > 0
+              ) {
+                currentLayer.strokes.push(currentStroke);
+              }
+              if (currentLayer && currentLayer.strokes.length > 0) {
+                parsedLayers.push(currentLayer);
+              }
+              currentLayer = {
+                id: Date.now() + Math.random().toString(),
+                name: currentName,
+                mirrored: false,
+                strokes: [],
+              };
+              currentStroke = null;
+            }
+            continue;
+          }
+
+          const sizeMatch = line.match(/lineWidth\s*=\s*(\d+)/);
+          if (sizeMatch) currentSize = parseInt(sizeMatch[1], 10);
+
+          const moveMatch = line.match(/moveTo\(([^,]+),\s*([^)]+)\)/);
+          if (moveMatch) {
+            const pt = {
+              x: parseCoord(moveMatch[1]),
+              y: parseCoord(moveMatch[2]),
+            };
+            if (currentSection === "vector") {
+              lastMoveTo = pt;
+            } else if (currentSection === "freehand") {
+              if (
+                currentStroke &&
+                currentStroke.points.length > 0 &&
+                currentLayer
+              ) {
+                currentLayer.strokes.push(currentStroke);
+              }
+              currentStroke = {
+                points: [pt],
+                size: currentSize,
+                isEraser: false,
+              };
+            }
+          }
+
+          if (currentSection === "vector" && lastMoveTo) {
+            const bezMatch = line.match(
+              /bezierCurveTo\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)/,
+            );
+            if (bezMatch) {
+              parsedCurves.push({
+                id: Date.now() + Math.random().toString(),
+                type: "bezier",
+                name: currentName,
+                mirrored: false,
+                p0: lastMoveTo,
+                cp1: { x: parseCoord(bezMatch[1]), y: parseCoord(bezMatch[2]) },
+                cp2: { x: parseCoord(bezMatch[3]), y: parseCoord(bezMatch[4]) },
+                p1: { x: parseCoord(bezMatch[5]), y: parseCoord(bezMatch[6]) },
+              });
+              lastMoveTo = null;
+            }
+
+            const quadMatch = line.match(
+              /quadraticCurveTo\(([^,]+),\s*([^,]+),\s*([^,]+),\s*([^)]+)\)/,
+            );
+            if (quadMatch) {
+              parsedCurves.push({
+                id: Date.now() + Math.random().toString(),
+                type: "quadratic",
+                name: currentName,
+                mirrored: false,
+                p0: lastMoveTo,
+                cp1: {
+                  x: parseCoord(quadMatch[1]),
+                  y: parseCoord(quadMatch[2]),
+                },
+                p1: {
+                  x: parseCoord(quadMatch[3]),
+                  y: parseCoord(quadMatch[4]),
+                },
+              });
+              lastMoveTo = null;
+            }
+
+            const lineMatch = line.match(/lineTo\(([^,]+),\s*([^)]+)\)/);
+            if (lineMatch) {
+              parsedCurves.push({
+                id: Date.now() + Math.random().toString(),
+                type: "line",
+                name: currentName,
+                mirrored: false,
+                p0: lastMoveTo,
+                p1: {
+                  x: parseCoord(lineMatch[1]),
+                  y: parseCoord(lineMatch[2]),
+                },
+              });
+              lastMoveTo = null;
+            }
+          }
+
+          if (currentSection === "freehand" && currentStroke) {
+            const lineMatch = line.match(/lineTo\(([^,]+),\s*([^)]+)\)/);
+            if (lineMatch) {
+              currentStroke.points.push({
+                x: parseCoord(lineMatch[1]),
+                y: parseCoord(lineMatch[2]),
+              });
+            }
+          }
+        }
+
+        if (currentLayer && currentStroke && currentStroke.points.length > 0) {
+          currentLayer.strokes.push(currentStroke);
+        }
+        if (currentLayer && currentLayer.strokes.length > 0) {
+          parsedLayers.push(currentLayer);
+        }
+
+        if (parsedCurves.length > 0 || parsedLayers.length > 0) {
+          setCurves(parsedCurves);
+          setFreehandLayers(parsedLayers);
+          setSelectedLayerId(null);
+          setActiveNode(null);
+          setShowImport(false);
+          setImportCode("");
+          alert("Legacy workspace successfully restored!");
+        } else {
+          alert("No recognizable format found in legacy code.");
+        }
+      } catch (e) {
+        alert("Failed to parse legacy code.");
+        console.error(e);
+      }
+    }
+  };
+
   return (
     <div className="flex flex-col md:flex-row h-screen bg-slate-50 font-sans text-slate-800">
-      {/* TOOLBAR */}
       <div className="w-full md:w-[360px] bg-white border-r border-slate-200 flex flex-col z-10 shrink-0 shadow-lg">
-        {/* Header with Export Button */}
         <div className="p-4 border-b border-slate-200 bg-slate-900 text-white flex justify-between items-center">
           <div>
             <h1 className="text-lg font-black tracking-tight">
               Blueprint Studio
             </h1>
             <p className="text-[10px] uppercase font-bold tracking-widest text-slate-400">
-              Vector & Sketch Editor
+              Vector & Sketch
             </p>
           </div>
-          <button
-            onClick={generateExport}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 px-3 rounded-lg transition-colors shadow-md"
-          >
-            <IconExport /> Export Design
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold py-1.5 px-2.5 rounded-lg transition-colors shadow-sm"
+            >
+              <IconImport /> Load
+            </button>
+            <button
+              onClick={generateExport}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-1.5 px-2.5 rounded-lg transition-colors shadow-md"
+            >
+              <IconExport /> Export
+            </button>
+          </div>
         </div>
 
-        {/* Global Toolbar */}
         <div className="flex p-4 border-b border-slate-200 gap-2 bg-slate-50 shrink-0">
           <button
-            onClick={() => setActiveMode("vector")}
+            onClick={() => handleModeChange("vector")}
             className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${activeMode === "vector" ? "bg-blue-600 text-white border-blue-700 shadow-inner" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"}`}
           >
             Vector Rig
           </button>
           <button
-            onClick={() => setActiveMode("freehand")}
+            onClick={() => handleModeChange("freehand")}
             className={`flex-1 py-2 text-xs font-bold rounded-lg border transition-all ${activeMode === "freehand" ? "bg-emerald-600 text-white border-emerald-700 shadow-inner" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"}`}
           >
             Static Accessory
@@ -972,7 +1118,6 @@ export default function App() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* View Settings Accordion */}
           <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden shrink-0">
             <button
               onClick={() => setGlobalViewOpen(!globalViewOpen)}
@@ -996,27 +1141,26 @@ export default function App() {
                       checked={gridVisible}
                       onChange={() => setGridVisible(!gridVisible)}
                     />
-                    <div className="w-9 h-5 bg-slate-300 rounded-full peer peer-checked:bg-blue-600 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                    <div className="w-9 h-5 bg-slate-300 rounded-full peer peer-checked:bg-blue-600 transition-all after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
                   </label>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Trace Reference Accordion */}
           <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden shrink-0">
             <button
               onClick={() => setTraceRefOpen(!traceRefOpen)}
               className="w-full p-4 flex justify-between items-center hover:bg-slate-100 transition-colors"
             >
               <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                Trace Reference Image
+                Trace Reference
               </h3>
               <IconChevron open={traceRefOpen} />
             </button>
             {traceRefOpen && (
               <div className="p-4 pt-0 space-y-4 border-t border-slate-200 mt-2">
-                <label className="flex items-center justify-center w-full py-2 px-4 border border-slate-300 rounded-lg cursor-pointer bg-white hover:bg-slate-100 text-xs font-bold text-slate-600 transition-colors mt-2">
+                <label className="flex items-center justify-center w-full py-2 px-4 border border-slate-300 rounded-lg cursor-pointer bg-white hover:bg-slate-100 text-xs font-bold text-slate-600 mt-2">
                   {referenceImg ? "Replace Image" : "Upload Template"}
                   <input
                     type="file"
@@ -1025,7 +1169,6 @@ export default function App() {
                     onChange={handleImageUpload}
                   />
                 </label>
-
                 {referenceImg && (
                   <div className="space-y-3 pt-2">
                     <div>
@@ -1045,7 +1188,7 @@ export default function App() {
                             opacity: Number(e.target.value),
                           })
                         }
-                        className="w-full mt-1 accent-blue-600"
+                        className="w-full accent-blue-600"
                       />
                     </div>
                     <div>
@@ -1064,7 +1207,7 @@ export default function App() {
                             scale: Number(e.target.value),
                           })
                         }
-                        className="w-full mt-1 accent-blue-600"
+                        className="w-full accent-blue-600"
                       />
                     </div>
                     <div className="flex gap-2">
@@ -1084,7 +1227,7 @@ export default function App() {
                               x: Number(e.target.value),
                             })
                           }
-                          className="w-full mt-1 accent-blue-600"
+                          className="w-full accent-blue-600"
                         />
                       </div>
                       <div className="flex-1">
@@ -1103,7 +1246,7 @@ export default function App() {
                               y: Number(e.target.value),
                             })
                           }
-                          className="w-full mt-1 accent-blue-600"
+                          className="w-full accent-blue-600"
                         />
                       </div>
                     </div>
@@ -1113,7 +1256,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Contextual Actions (Vector vs Freehand) */}
           {activeMode === "vector" ? (
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 space-y-2 shrink-0">
               <h3 className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-2">
@@ -1124,13 +1266,13 @@ export default function App() {
                   onClick={() => addCurve("bezier")}
                   className="py-2 bg-white border border-blue-200 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors shadow-sm"
                 >
-                  + Bezier (Complex S-Curve)
+                  + Bezier (S-Curve)
                 </button>
                 <button
                   onClick={() => addCurve("quadratic")}
                   className="py-2 bg-white border border-blue-200 rounded-lg text-xs font-bold text-blue-600 hover:border-blue-400 transition-colors shadow-sm"
                 >
-                  + Quadratic (Simple Curve)
+                  + Quadratic (Simple)
                 </button>
                 <button
                   onClick={() => addCurve("line")}
@@ -1148,14 +1290,14 @@ export default function App() {
               <div className="flex gap-2 bg-white p-1 rounded-lg border border-emerald-200 shadow-sm">
                 <button
                   onClick={() => setFreehandTool("brush")}
-                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "brush" ? "bg-emerald-600 text-white shadow-inner" : "text-slate-500 hover:bg-slate-100"}`}
+                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "brush" ? "bg-emerald-600 text-white" : "text-slate-500 hover:bg-slate-100"}`}
                 >
                   <IconBrush />{" "}
                   <span className="ml-2 text-xs font-bold">Brush</span>
                 </button>
                 <button
                   onClick={() => setFreehandTool("eraser")}
-                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "eraser" ? "bg-red-500 text-white shadow-inner" : "text-slate-500 hover:bg-slate-100"}`}
+                  className={`flex-1 py-1.5 flex justify-center items-center rounded-md transition-all ${freehandTool === "eraser" ? "bg-red-500 text-white" : "text-slate-500 hover:bg-slate-100"}`}
                 >
                   <IconEraser />{" "}
                   <span className="ml-2 text-xs font-bold">Eraser</span>
@@ -1171,37 +1313,54 @@ export default function App() {
                   max="50"
                   value={brushSize}
                   onChange={(e) => setBrushSize(Number(e.target.value))}
-                  className={`w-full mt-1 ${freehandTool === "eraser" ? "accent-red-500" : "accent-emerald-600"}`}
+                  className={`w-full ${freehandTool === "eraser" ? "accent-red-500" : "accent-emerald-600"}`}
                 />
               </div>
+              <div className="flex justify-between items-center pt-3 border-t border-emerald-200">
+                <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">
+                  Magnetic Snap
+                </span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={freehandSnapEnabled}
+                    onChange={() =>
+                      setFreehandSnapEnabled(!freehandSnapEnabled)
+                    }
+                  />
+                  <div className="w-8 h-4 bg-emerald-200 rounded-full peer peer-checked:bg-emerald-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3"></div>
+                </label>
+              </div>
+              <button
+                onClick={() => setSelectedLayerId(null)}
+                className={`w-full py-2 border rounded-md text-xs font-bold shadow-sm ${selectedLayerId === null ? "bg-emerald-600 text-white" : "bg-white text-emerald-600 hover:bg-emerald-50"}`}
+              >
+                + Start New Layer
+              </button>
             </div>
           )}
 
-          {/* Layer Manager */}
-          {(activeMode === "vector" && curves.length > 0) ||
-          (activeMode === "freehand" && freehandLayers.length > 0) ? (
+          {(activeMode === "vector"
+            ? curves.length > 0
+            : freehandLayers.length > 0) && (
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4 shrink-0 pb-10">
               <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-200 pb-2">
                 Active Layers (
-                {activeMode === "vector" ? "Vector Rig" : "Accessories"})
+                {activeMode === "vector" ? "Vector" : "Accessory"})
               </h3>
-
-              {/* --- Vector Layers --- */}
-              {activeMode === "vector" && curves.length > 0 && (
-                <div className="space-y-2">
-                  {curves.map((c) => (
+              <div className="space-y-2">
+                {activeMode === "vector" &&
+                  curves.map((c) => (
                     <div
                       key={c.id}
-                      onClick={() => {
-                        setSelectedLayerId(c.id);
-                        setActiveMode("vector");
-                      }}
+                      onClick={() => setSelectedLayerId(c.id)}
                       className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === c.id ? "bg-blue-50 border-blue-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
                     >
                       {editingNameId === c.id ? (
                         <input
                           autoFocus
-                          className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800"
+                          className="bg-white border border-blue-300 px-2 py-1 rounded outline-none flex-1 text-xs"
                           value={c.name}
                           onChange={(e) =>
                             updateLayerName(c.id, e.target.value, "vector")
@@ -1213,13 +1372,10 @@ export default function App() {
                         />
                       ) : (
                         <div className="flex-1 flex items-center min-w-0 pr-2">
-                          <span className="text-[10px] font-bold text-blue-400 mr-2 shrink-0">
+                          <span className="text-[10px] font-bold text-blue-400 mr-2">
                             [V]
                           </span>
-                          <span
-                            className="font-semibold text-xs text-slate-700 truncate"
-                            title={c.name}
-                          >
+                          <span className="font-semibold text-xs text-slate-700 truncate">
                             {c.name}
                           </span>
                           <button
@@ -1228,8 +1384,7 @@ export default function App() {
                               setSelectedLayerId(c.id);
                               setEditingNameId(c.id);
                             }}
-                            className="ml-2 text-slate-300 hover:text-blue-500 transition-colors p-1 shrink-0"
-                            title="Rename Layer"
+                            className="ml-2 text-slate-300 hover:text-blue-500 p-1"
                           >
                             <IconPencil />
                           </button>
@@ -1238,8 +1393,7 @@ export default function App() {
                               e.stopPropagation();
                               toggleLayerMirror(c.id, "vector");
                             }}
-                            className={`ml-1 p-1 shrink-0 transition-colors ${c.mirrored ? "text-blue-500" : "text-slate-300 hover:text-slate-400"}`}
-                            title="Toggle Mirror Symmetry"
+                            className={`ml-1 p-1 ${c.mirrored ? "text-blue-500" : "text-slate-300"}`}
                           >
                             <IconMirror active={c.mirrored} />
                           </button>
@@ -1250,141 +1404,118 @@ export default function App() {
                           e.stopPropagation();
                           removeLayer(c.id, "vector");
                         }}
-                        className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
+                        className="text-red-400 hover:text-red-600 font-bold px-2 py-1 text-xs"
                       >
                         ✕
                       </button>
                     </div>
                   ))}
-                </div>
-              )}
-
-              {/* --- Accessory Layers --- */}
-              {activeMode === "freehand" && freehandLayers.length > 0 && (
-                <div className="space-y-2 mt-4">
-                  {/* Grouping Actions for Freehand Mode */}
-                  {checkedFreehandIds.length > 0 && (
-                    <div className="flex justify-between items-center mb-2 bg-emerald-50 px-3 py-2 rounded-lg text-emerald-800 border border-emerald-200 shadow-sm">
-                      <span className="text-[10px] font-bold">
-                        ({checkedFreehandIds.length}) layers selected
-                      </span>
-                      <div className="flex gap-1">
+                {activeMode === "freehand" && (
+                  <div className="space-y-2">
+                    {checkedFreehandIds.length > 0 && (
+                      <div className="flex justify-between items-center mb-2 bg-emerald-50 px-3 py-2 rounded-lg text-emerald-800 border border-emerald-200">
+                        <span className="text-[10px] font-bold">
+                          ({checkedFreehandIds.length}) selected
+                        </span>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={groupSelectedLayers}
+                            className="p-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                          >
+                            <IconGroup />
+                          </button>
+                          <button
+                            onClick={() => setCheckedFreehandIds([])}
+                            className="p-1.5 bg-slate-200 text-slate-600 rounded"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {freehandLayers.map((p) => (
+                      <div
+                        key={p.id}
+                        onClick={() => setSelectedLayerId(p.id)}
+                        className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === p.id ? "bg-emerald-50 border-emerald-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
+                      >
+                        {editingNameId === p.id ? (
+                          <input
+                            autoFocus
+                            className="bg-white border border-emerald-300 px-2 py-1 rounded outline-none flex-1 text-xs"
+                            value={p.name}
+                            onChange={(e) =>
+                              updateLayerName(p.id, e.target.value, "freehand")
+                            }
+                            onBlur={() => setEditingNameId(null)}
+                            onKeyDown={(e) =>
+                              e.key === "Enter" && setEditingNameId(null)
+                            }
+                          />
+                        ) : (
+                          <div className="flex-1 flex items-center min-w-0 pr-2">
+                            <input
+                              type="checkbox"
+                              className="mr-2 w-3 h-3 accent-emerald-600"
+                              checked={checkedFreehandIds.includes(p.id)}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                setCheckedFreehandIds((pids) =>
+                                  e.target.checked
+                                    ? [...pids, p.id]
+                                    : pids.filter((id) => id !== p.id),
+                                );
+                              }}
+                            />
+                            <span className="text-[10px] font-bold mr-2 text-emerald-400">
+                              [A]
+                            </span>
+                            <span className="font-semibold text-xs text-slate-700 truncate">
+                              {p.name}
+                            </span>
+                            <span className="ml-1 text-[9px] text-slate-400">
+                              ({p.strokes.length})
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedLayerId(p.id);
+                                setEditingNameId(p.id);
+                              }}
+                              className="ml-2 text-slate-300 hover:text-emerald-500 p-1"
+                            >
+                              <IconPencil />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleLayerMirror(p.id, "freehand");
+                              }}
+                              className={`ml-1 p-1 ${p.mirrored ? "text-emerald-500" : "text-slate-300"}`}
+                            >
+                              <IconMirror active={p.mirrored} />
+                            </button>
+                          </div>
+                        )}
                         <button
-                          onClick={groupSelectedLayers}
-                          className="p-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 transition-colors"
-                          title="Group Selected Layers"
-                        >
-                          <IconGroup />
-                        </button>
-                        <button
-                          onClick={() => setCheckedFreehandIds([])}
-                          className="p-1.5 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 transition-colors font-bold text-[10px]"
-                          title="Deselect All"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeLayer(p.id, "freehand");
+                          }}
+                          className="text-red-400 hover:text-red-600 font-bold px-2 py-1 text-xs"
                         >
                           ✕
                         </button>
                       </div>
-                    </div>
-                  )}
-
-                  {freehandLayers.map((p) => (
-                    <div
-                      key={p.id}
-                      onClick={() => {
-                        setSelectedLayerId(p.id);
-                        setActiveMode("freehand");
-                      }}
-                      className={`flex justify-between items-center p-2 border rounded-lg cursor-pointer transition-colors ${selectedLayerId === p.id ? "bg-emerald-50 border-emerald-400 shadow-sm" : "bg-white border-slate-200 hover:border-slate-300"}`}
-                    >
-                      {editingNameId === p.id ? (
-                        <input
-                          autoFocus
-                          className="bg-white border border-emerald-300 px-2 py-1 rounded outline-none flex-1 text-xs text-slate-800 ml-2"
-                          value={p.name}
-                          onChange={(e) =>
-                            updateLayerName(p.id, e.target.value, "freehand")
-                          }
-                          onBlur={() => setEditingNameId(null)}
-                          onKeyDown={(e) =>
-                            e.key === "Enter" && setEditingNameId(null)
-                          }
-                        />
-                      ) : (
-                        <div className="flex-1 flex items-center min-w-0 pr-2">
-                          <input
-                            type="checkbox"
-                            className="mr-2 cursor-pointer w-3 h-3 accent-emerald-600"
-                            checked={checkedFreehandIds.includes(p.id)}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              if (e.target.checked)
-                                setCheckedFreehandIds((prev) => [
-                                  ...prev,
-                                  p.id,
-                                ]);
-                              else
-                                setCheckedFreehandIds((prev) =>
-                                  prev.filter((id) => id !== p.id),
-                                );
-                              setActiveMode("freehand");
-                            }}
-                          />
-                          <span
-                            className={`text-[10px] font-bold mr-2 shrink-0 text-emerald-400`}
-                          >
-                            [A]
-                          </span>
-                          <span
-                            className="font-semibold text-xs text-slate-700 truncate"
-                            title={p.name}
-                          >
-                            {p.name}
-                          </span>
-                          <span className="ml-1 text-[9px] font-mono text-slate-400">
-                            ({p.strokes.length})
-                          </span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedLayerId(p.id);
-                              setEditingNameId(p.id);
-                            }}
-                            className="ml-2 text-slate-300 hover:text-emerald-500 transition-colors p-1 shrink-0"
-                            title="Rename Layer"
-                          >
-                            <IconPencil />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleLayerMirror(p.id, "freehand");
-                            }}
-                            className={`ml-1 p-1 shrink-0 transition-colors ${p.mirrored ? "text-emerald-500" : "text-slate-300 hover:text-slate-400"}`}
-                            title="Toggle Mirror Symmetry"
-                          >
-                            <IconMirror active={p.mirrored} />
-                          </button>
-                        </div>
-                      )}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeLayer(p.id, "freehand");
-                        }}
-                        className="text-red-400 hover:text-red-600 font-bold px-2 py-1 rounded hover:bg-red-50 transition-colors shrink-0 text-xs"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          ) : null}
+          )}
         </div>
       </div>
 
-      {/* CANVAS WORKSPACE */}
       <div className="flex-1 bg-slate-200/50 flex flex-col items-center justify-center relative p-4 overflow-hidden">
         <div
           className="bg-white rounded-xl shadow-2xl p-1 w-full max-w-[600px] aspect-square relative z-10 ring-1 ring-slate-900/5"
@@ -1426,14 +1557,57 @@ export default function App() {
             </>
           ) : (
             <span>
-              Draw shapes or erase background strokes safely. Strokes append to
-              the active layer.
+              Sketch accessory layers.{" "}
+              {freehandSnapEnabled ? "Snapping is ON." : "Snapping is OFF."}
             </span>
           )}
         </div>
       </div>
 
-      {/* EXPORT MODAL */}
+      {showImport && (
+        <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <h2 className="font-bold text-slate-800">Resume Workspace</h2>
+              <button
+                onClick={() => setShowImport(false)}
+                className="text-slate-400 hover:text-slate-800 text-xl font-bold"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-4 flex-1">
+              <p className="text-xs text-slate-500 mb-2">
+                Paste previously exported code including the{" "}
+                <code>// STATE_JSON:...</code> line.
+              </p>
+              <textarea
+                className="w-full h-80 p-4 font-mono text-[11px] bg-slate-900 text-blue-400 resize-none focus:outline-none rounded-xl"
+                placeholder="Paste code here..."
+                value={importCode}
+                onChange={(e) => setImportCode(e.target.value)}
+              />
+            </div>
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowImport(false);
+                  setImportCode("");
+                }}
+                className="px-6 py-2 text-sm font-bold text-slate-600 hover:bg-slate-200 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImportAction}
+                className="px-6 py-2 text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow-md"
+              >
+                Load Workspace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {showExport && (
         <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -1458,7 +1632,7 @@ export default function App() {
             <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
               <button
                 onClick={() => setShowExport(false)}
-                className="px-6 py-2 text-sm font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
+                className="px-6 py-2 text-sm font-bold text-slate-600 hover:bg-slate-200 rounded-lg"
               >
                 Close
               </button>
@@ -1467,7 +1641,7 @@ export default function App() {
                   navigator.clipboard.writeText(exportedCode);
                   alert("Copied!");
                 }}
-                className="px-6 py-2 text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors shadow-md"
+                className="px-6 py-2 text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow-md"
               >
                 Copy Code
               </button>
